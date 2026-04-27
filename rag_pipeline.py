@@ -161,22 +161,42 @@ class SimpleVectorStore:
         return [self.documents[i] for i in indices]
 
     def save(self, path: str) -> None:
-        """Persist to disk using JSON + NumPy (no pickle)."""
+        """Persist to disk using JSON + NumPy (no pickle anywhere)."""
         os.makedirs(path, exist_ok=True)
-        # Sanitise every document into plain Python primitives
+
+        # Force every document into plain Python primitives.
         docs_serialisable = []
         for d in self.documents:
-            docs_serialisable.append({
-                "page_content": str(d.page_content) if d.page_content is not None else "",
-                "metadata": {
-                    k: (str(v) if not isinstance(v, (int, float, bool, type(None))) else v)
-                    for k, v in (d.metadata or {}).items()
-                },
-            })
+            content = d.page_content
+            if isinstance(content, bytes):
+                content = content.decode("utf-8", errors="replace")
+            content = str(content) if content is not None else ""
+
+            meta_clean = {}
+            for k, v in (d.metadata or {}).items():
+                k = str(k)
+                if v is None or isinstance(v, (bool, int, float)):
+                    meta_clean[k] = v
+                elif isinstance(v, bytes):
+                    meta_clean[k] = v.decode("utf-8", errors="replace")
+                else:
+                    meta_clean[k] = str(v)
+            docs_serialisable.append(
+                {"page_content": content, "metadata": meta_clean}
+            )
+
         with open(os.path.join(path, "documents.json"), "w", encoding="utf-8") as f:
             json.dump(docs_serialisable, f, ensure_ascii=False)
+
+        # Save embeddings as a contiguous float32 array — explicitly disable
+        # pickle so np.save NEVER falls back to it for any reason.
         if self.embeddings is not None:
-            np.save(os.path.join(path, "embeddings.npy"), self.embeddings)
+            arr = np.asarray(self.embeddings, dtype=np.float32)
+            np.save(
+                os.path.join(path, "embeddings.npy"),
+                arr,
+                allow_pickle=False,
+            )
 
     @classmethod
     def load(cls, path: str) -> Optional["SimpleVectorStore"]:

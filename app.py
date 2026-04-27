@@ -645,6 +645,72 @@ hr {
     animation: slideRight 0.4s ease-out;
 }
 
+/* ── Sidebar chat history rows ─────────────────────────── */
+.chat-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0.45rem 0.6rem;
+    margin: 0.25rem 0;
+    background: rgba(212, 168, 75, 0.06);
+    border: 1px solid rgba(212, 168, 75, 0.18);
+    border-radius: 5px;
+    font-size: 0.85rem;
+    color: var(--parchment);
+}
+.chat-row-active {
+    background: linear-gradient(180deg, rgba(212,168,75,0.20), rgba(212,168,75,0.08));
+    border-color: var(--gold-400);
+}
+.chat-row-title { font-weight: 500; }
+.chat-row-tag {
+    color: var(--gold-300);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* Make sidebar buttons (chat rows) less obtrusive */
+section[data-testid="stSidebar"] .stButton > button {
+    background: rgba(212, 168, 75, 0.06) !important;
+    color: var(--parchment) !important;
+    border: 1px solid rgba(212, 168, 75, 0.20) !important;
+    border-radius: 5px !important;
+    font-weight: 400 !important;
+    padding: 0.4rem 0.6rem !important;
+    text-align: left !important;
+    box-shadow: none !important;
+    font-size: 0.85rem !important;
+}
+section[data-testid="stSidebar"] .stButton > button:hover {
+    background: rgba(212, 168, 75, 0.16) !important;
+    border-color: rgba(212, 168, 75, 0.55) !important;
+    transform: none !important;
+}
+
+/* The "+ New Chat" button stays gold */
+section[data-testid="stSidebar"] button[kind="secondary"][data-testid*="new_chat"],
+section[data-testid="stSidebar"] .stButton:first-of-type > button {
+    background: linear-gradient(180deg, #d4a84b, #b88a2d) !important;
+    color: #1c1408 !important;
+    border: 1px solid rgba(255,255,255,0.2) !important;
+    font-weight: 600 !important;
+    text-align: center !important;
+}
+
+/* Search input */
+section[data-testid="stSidebar"] [data-testid="stTextInput"] input {
+    background: rgba(255,255,255,0.04) !important;
+    border: 1px solid rgba(212, 168, 75, 0.25) !important;
+    color: var(--parchment) !important;
+    border-radius: 5px !important;
+    font-size: 0.88rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="stTextInput"] input::placeholder {
+    color: var(--text-mute) !important;
+    font-style: italic;
+}
+
 /* ── Landing-page upload card ──────────────────────────── */
 .upload-card-header {
     display: flex;
@@ -755,33 +821,172 @@ header [aria-label*="Sidebar"] {
 """, unsafe_allow_html=True)
 
 # ── Initialize session state ─────────────────────────────────────────
+# ── Persistent chat sessions (ChatGPT-style threads) ─────────────────
+import json
+import time
+import uuid
+from pathlib import Path
+
+CHATS_DIR = Path(__file__).parent / "chats"
+CHATS_DIR.mkdir(exist_ok=True)
+
+
+def _chat_path(chat_id: str) -> Path:
+    return CHATS_DIR / f"{chat_id}.json"
+
+
+def load_all_chats() -> list[dict]:
+    """Return all saved chats sorted newest-first."""
+    chats = []
+    for p in CHATS_DIR.glob("*.json"):
+        try:
+            chats.append(json.loads(p.read_text(encoding="utf-8")))
+        except Exception:
+            continue
+    chats.sort(key=lambda c: c.get("updated", 0), reverse=True)
+    return chats
+
+
+def save_chat(chat: dict) -> None:
+    chat["updated"] = time.time()
+    if not chat.get("created"):
+        chat["created"] = chat["updated"]
+    _chat_path(chat["id"]).write_text(
+        json.dumps(chat, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def delete_chat(chat_id: str) -> None:
+    p = _chat_path(chat_id)
+    if p.exists():
+        p.unlink()
+
+
+def new_chat() -> dict:
+    return {
+        "id": uuid.uuid4().hex[:10],
+        "title": "New chat",
+        "messages": [],
+        "created": time.time(),
+        "updated": time.time(),
+    }
+
+
+def _short_title(q: str, max_len: int = 38) -> str:
+    q = (q or "").strip().splitlines()[0] if q else "New chat"
+    return q if len(q) <= max_len else q[: max_len - 1] + "…"
+
+
 if "assistant" not in st.session_state:
     st.session_state.assistant = StudyAssistant()
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+if "current_chat" not in st.session_state:
+    st.session_state.current_chat = new_chat()
 if "processed" not in st.session_state:
     st.session_state.processed = False
+if "search_query" not in st.session_state:
+    st.session_state.search_query = ""
 
 assistant: StudyAssistant = st.session_state.assistant
+# Backwards-compat alias for the rest of the app.
+st.session_state.chat_history = st.session_state.current_chat["messages"]
 
-# ── Sidebar (study companion panel — upload moved to main area) ──────
+# ── Sidebar — New Chat / Search / History (ChatGPT-style) ────────────
 with st.sidebar:
-    st.markdown(
-        """
-        <div style='text-align:center; padding: 0.4rem 0 0.8rem;'>
-            <div style='font-size:1.6rem; color:#d4a84b;'>❦</div>
-            <h2 style='margin:0; font-family:"Cormorant Garamond", serif;
-                       color:#f5ecd7; font-weight:600; letter-spacing:0.04em;'>
-                The Library
-            </h2>
-            <p style='color:#8ea0bb; font-size:0.78rem; font-style:italic;
-                      letter-spacing:0.08em; margin-top:0.1rem;'>
-                study companion
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # ── New Chat button ────────────────────────────────────────────
+    if st.button("➕  New Chat", key="new_chat_btn", use_container_width=True):
+        # Save the current chat (if it has any messages) before starting a new one
+        if st.session_state.current_chat["messages"]:
+            save_chat(st.session_state.current_chat)
+        st.session_state.current_chat = new_chat()
+        st.session_state.search_query = ""
+        st.rerun()
+
+    # ── Search box ─────────────────────────────────────────────────
+    st.session_state.search_query = st.text_input(
+        "Search chats",
+        value=st.session_state.search_query,
+        placeholder="🔍  Search chats…",
+        label_visibility="collapsed",
+        key="search_input",
     )
+
+    st.markdown("---")
+
+    # ── History list ───────────────────────────────────────────────
+    st.markdown("### 🕰️ History")
+    saved_chats = load_all_chats()
+    q = st.session_state.search_query.strip().lower()
+
+    if q:
+        # Filter: title OR any message content matches
+        def _matches(chat: dict) -> bool:
+            if q in chat.get("title", "").lower():
+                return True
+            for m in chat.get("messages", []):
+                if q in (m.get("query", "") or "").lower():
+                    return True
+                if q in (m.get("answer", "") or "").lower():
+                    return True
+            return False
+        saved_chats = [c for c in saved_chats if _matches(c)]
+
+    current_id = st.session_state.current_chat["id"]
+    is_current_unsaved = (
+        not any(c["id"] == current_id for c in saved_chats)
+        and st.session_state.current_chat["messages"]
+    )
+
+    # Show the unsaved current chat at the very top
+    if is_current_unsaved and not q:
+        title = _short_title(
+            st.session_state.current_chat["messages"][0].get("query", "")
+        ) if st.session_state.current_chat["messages"] else "New chat"
+        st.markdown(
+            f"<div class='chat-row chat-row-active'>"
+            f"<span class='chat-row-title'>{title}</span>"
+            f"<span class='chat-row-tag'>active</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+    if not saved_chats and not is_current_unsaved:
+        st.caption(
+            "No chats yet — ask a question and it will appear here."
+            if not q else
+            f"No chats matching '{st.session_state.search_query}'."
+        )
+
+    for chat in saved_chats:
+        cid = chat["id"]
+        is_active = cid == current_id
+        title = chat.get("title") or "Untitled"
+        msg_count = len(chat.get("messages", []))
+
+        c1, c2 = st.columns([5, 1])
+        with c1:
+            row_label = f"{'▸ ' if is_active else ''}{title}  ·  {msg_count} msg"
+            if st.button(
+                row_label,
+                key=f"chat_open_{cid}",
+                use_container_width=True,
+            ):
+                # Save current chat first (if it has messages)
+                if (
+                    st.session_state.current_chat["messages"]
+                    and st.session_state.current_chat["id"] != cid
+                ):
+                    save_chat(st.session_state.current_chat)
+                # Load the chosen chat
+                loaded = json.loads(_chat_path(cid).read_text(encoding="utf-8"))
+                st.session_state.current_chat = loaded
+                st.rerun()
+        with c2:
+            if st.button("🗑", key=f"chat_del_{cid}", help="Delete this chat"):
+                delete_chat(cid)
+                if cid == current_id:
+                    st.session_state.current_chat = new_chat()
+                st.rerun()
+
     st.markdown("---")
 
     # ── Catalogue stats ────────────────────────────────────────────
@@ -802,18 +1007,8 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    chat_count = len(st.session_state.chat_history)
-    qa_only = sum(1 for e in st.session_state.chat_history if e.get("mode") == "qa")
-    st.markdown(f"""
-    <div class="status-card" style="margin-top:0.5rem;">
-        <div class="number">{chat_count}</div>
-        <div class="label">Conversations</div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Indexed files ──────────────────────────────────────────────
     if assistant.indexed_files:
-        st.markdown("### 📜 Volumes on the Shelf")
+        st.markdown("### 📜 Indexed PDFs")
         items = "".join(
             f"<li>📖 {fname}</li>" for fname in assistant.indexed_files
         )
@@ -824,28 +1019,10 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # ── Recent questions ───────────────────────────────────────────
-    if st.session_state.chat_history:
-        st.markdown("### 🕰️ Recent Questions")
-        for entry in reversed(st.session_state.chat_history[-5:]):
-            q = entry.get("query", "")
-            short = q if len(q) <= 60 else q[:57] + "…"
-            mode_emoji = {
-                "qa": "❓", "summarize": "📝", "mcq": "📋", "eli5": "💡"
-            }.get(entry.get("mode", "qa"), "❓")
-            st.markdown(
-                f"<div style='font-size:0.82rem; color:#cbd5e1; "
-                f"padding:0.3rem 0.5rem; margin:0.25rem 0; "
-                f"background:rgba(212,168,75,0.05); "
-                f"border-left:2px solid rgba(212,168,75,0.4); "
-                f"border-radius:0 4px 4px 0;'>"
-                f"{mode_emoji}  {short}</div>",
-                unsafe_allow_html=True,
-            )
-
-        # Export chat as markdown
+    # ── Export current chat ────────────────────────────────────────
+    if st.session_state.current_chat["messages"]:
         chat_md_lines = ["# AI Study Assistant — Chat Export\n"]
-        for i, entry in enumerate(st.session_state.chat_history, 1):
+        for i, entry in enumerate(st.session_state.current_chat["messages"], 1):
             mode_label = {
                 "qa": "Inquire", "summarize": "Summarise",
                 "mcq": "Quiz Me", "eli5": "Explain Simply",
@@ -860,20 +1037,13 @@ with st.sidebar:
         chat_md = "\n".join(chat_md_lines)
 
         st.download_button(
-            "💾 Export Chat (.md)",
+            "💾 Export Current Chat",
             data=chat_md,
             file_name="ai_study_assistant_chat.md",
             mime="text/markdown",
             key="export_chat_btn",
             use_container_width=True,
         )
-
-        if st.button("🧹 Clear Chat History", key="clear_chat_btn",
-                     use_container_width=True):
-            st.session_state.chat_history = []
-            st.rerun()
-
-        st.markdown("---")
 
     # ── Tips ───────────────────────────────────────────────────────
     with st.expander("💡 Study Tips", expanded=False):
@@ -907,15 +1077,21 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    # ── Danger zone ────────────────────────────────────────────────
-    with st.expander("⚠️ Danger Zone", expanded=False):
-        st.caption("This wipes the indexed PDFs from disk.")
-        if st.button("🗑️ Clear All Data", key="clear_btn",
-                     use_container_width=True):
-            assistant.clear_vectorstore()
-            st.session_state.chat_history = []
-            st.session_state.processed = False
-            st.rerun()
+    # ── Clear all data (simple, no expander) ───────────────────────
+    if st.button("🗑️ Clear Data", key="clear_btn",
+                 use_container_width=True,
+                 help="Wipes all indexed PDFs and saved chats from disk."):
+        assistant.clear_vectorstore()
+        # Wipe all saved chat files
+        for p in CHATS_DIR.glob("*.json"):
+            try:
+                p.unlink()
+            except Exception:
+                pass
+        st.session_state.current_chat = new_chat()
+        st.session_state.processed = False
+        st.session_state.search_query = ""
+        st.rerun()
 
     # ── Footer ─────────────────────────────────────────────────────
     st.markdown("---")
@@ -1023,7 +1199,7 @@ if main_process_clicked and main_files:
 st.markdown("---")
 
 # ── Chat history display ─────────────────────────────────────────────
-if not st.session_state.chat_history and not assistant.indexed_files:
+if not st.session_state.current_chat["messages"] and not assistant.indexed_files:
     # Welcome card — opening page of a study journal
     st.markdown("""
     <div class="welcome-card">
@@ -1059,7 +1235,7 @@ if not st.session_state.chat_history and not assistant.indexed_files:
     """, unsafe_allow_html=True)
 
 # Display past messages
-for entry in st.session_state.chat_history:
+for entry in st.session_state.current_chat["messages"]:
     with st.chat_message("user", avatar="✍️"):
         st.markdown(entry["query"])
     with st.chat_message("assistant", avatar="📜"):
@@ -1116,11 +1292,19 @@ if prompt := st.chat_input(
                         + ("…" if len(doc.page_content) > 500 else "")
                     )
 
-    # Save to history
-    st.session_state.chat_history.append({
+    # Save to history (current chat thread + persist to disk)
+    st.session_state.current_chat["messages"].append({
         "query": prompt,
         "mode": mode,
         "answer": answer,
         "sources": source_labels if source_docs else [],
         "source_texts": source_texts if source_docs else [],
     })
+    # Auto-set chat title from the first message of the thread
+    if (
+        st.session_state.current_chat.get("title") in (None, "", "New chat")
+        and st.session_state.current_chat["messages"]
+    ):
+        st.session_state.current_chat["title"] = _short_title(prompt)
+    # Persist to disk so the chat survives reloads / Streamlit Cloud restarts
+    save_chat(st.session_state.current_chat)

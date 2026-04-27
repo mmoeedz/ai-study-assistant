@@ -15,6 +15,9 @@ vectorstore/
 *.pkl
 fastembed_cache/
 
+# Persisted chat sessions
+chats/
+
 # Editor / OS
 .vscode/
 .idea/

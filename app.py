@@ -645,6 +645,36 @@ hr {
     animation: slideRight 0.4s ease-out;
 }
 
+/* ── Landing-page upload card ──────────────────────────── */
+.upload-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    background: linear-gradient(180deg, rgba(212,168,75,0.10), rgba(212,168,75,0.04));
+    border: 1px solid rgba(212,168,75,0.35);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 0.6rem;
+    animation: fadeSlideIn 0.5s ease-out;
+}
+.upload-card-header .upload-icon {
+    font-size: 1.6rem;
+    line-height: 1;
+}
+.upload-card-header .upload-title {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 1.25rem;
+    font-weight: 600;
+    color: var(--parchment);
+    letter-spacing: 0.01em;
+}
+.upload-card-header .upload-sub {
+    color: var(--text-mute);
+    font-size: 0.82rem;
+    font-style: italic;
+    margin-top: 0.05rem;
+}
+
 /* ── Hide Streamlit default chrome (carefully) ──────────── */
 /* Hide hamburger menu + footer, but KEEP the header so the
    sidebar-toggle button remains visible on mobile.            */
@@ -661,31 +691,63 @@ header[data-testid="stHeader"] [data-testid="stToolbar"] {
 }
 
 /* Style the sidebar toggle (hamburger) so users can find it
-   on mobile.                                                  */
+   on mobile. Multiple selectors to match different Streamlit
+   versions.                                                   */
 [data-testid="collapsedControl"],
-button[kind="header"][data-testid="baseButton-headerNoPadding"],
-button[data-testid="stSidebarCollapseButton"] {
+button[kind="header"],
+button[kind="headerNoPadding"],
+button[data-testid="baseButton-headerNoPadding"],
+button[data-testid="stSidebarCollapseButton"],
+button[data-testid="stSidebarCollapsedControl"],
+header [aria-label*="sidebar"],
+header [aria-label*="Sidebar"] {
     visibility: visible !important;
+    display: inline-flex !important;
+    opacity: 1 !important;
+    pointer-events: auto !important;
     color: var(--gold-400) !important;
-    background: rgba(212, 168, 75, 0.1) !important;
-    border: 1px solid rgba(212, 168, 75, 0.4) !important;
+    background: rgba(212, 168, 75, 0.18) !important;
+    border: 1px solid rgba(212, 168, 75, 0.5) !important;
     border-radius: 6px !important;
 }
 
-/* Mobile-specific: make the sidebar toggle bigger and more
-   visible so users can find it.                               */
+/* When sidebar is collapsed, the floating control sits at top-left.
+   Force it to be a noticeable gold pill.                      */
+[data-testid="collapsedControl"] {
+    position: fixed !important;
+    top: 0.55rem !important;
+    left: 0.55rem !important;
+    z-index: 9999 !important;
+    background: linear-gradient(180deg, #d4a84b, #b88a2d) !important;
+    color: #1c1408 !important;
+    padding: 0.4rem 0.55rem !important;
+    box-shadow: 0 4px 14px rgba(212, 168, 75, 0.4) !important;
+}
+[data-testid="collapsedControl"] svg {
+    width: 1.4rem !important;
+    height: 1.4rem !important;
+    color: #1c1408 !important;
+    fill: #1c1408 !important;
+}
+
+/* Mobile-specific: bigger toggle + tighter cards. */
 @media (max-width: 768px) {
     [data-testid="collapsedControl"],
     button[data-testid="stSidebarCollapseButton"] {
         background: linear-gradient(180deg, #d4a84b, #b88a2d) !important;
         color: #1c1408 !important;
-        box-shadow: 0 4px 14px rgba(212, 168, 75, 0.35) !important;
+        box-shadow: 0 4px 14px rgba(212, 168, 75, 0.45) !important;
         font-weight: 700 !important;
+        padding: 0.5rem 0.65rem !important;
     }
     /* Tighten header on mobile */
     .main-header h1 { font-size: 2.1rem !important; }
     .main-header p  { font-size: 0.9rem !important; }
     .response-card  { padding: 1.2rem 1.3rem !important; }
+    /* Stack the upload card icon + text more compactly */
+    .upload-card-header { padding: 0.7rem 0.85rem; gap: 0.6rem; }
+    .upload-card-header .upload-title { font-size: 1.1rem; }
+    .upload-card-header .upload-sub   { font-size: 0.75rem; }
 }
 
 .block-container { padding-top: 1.5rem !important; }
@@ -702,7 +764,7 @@ if "processed" not in st.session_state:
 
 assistant: StudyAssistant = st.session_state.assistant
 
-# ── Sidebar ──────────────────────────────────────────────────────────
+# ── Sidebar (study companion panel — upload moved to main area) ──────
 with st.sidebar:
     st.markdown(
         """
@@ -714,7 +776,7 @@ with st.sidebar:
             </h2>
             <p style='color:#8ea0bb; font-size:0.78rem; font-style:italic;
                       letter-spacing:0.08em; margin-top:0.1rem;'>
-                document manager
+                study companion
             </p>
         </div>
         """,
@@ -722,50 +784,17 @@ with st.sidebar:
     )
     st.markdown("---")
 
-    # File uploader
-    uploaded_files = st.file_uploader(
-        "Upload your study materials",
-        type=["pdf"],
-        accept_multiple_files=True,
-        help="Drag & drop PDF files here",
-        key="pdf_uploader",
-    )
-
-    # Process button
-    if uploaded_files:
-        st.markdown(f"📎 **{len(uploaded_files)}** file(s) selected")
-
-        if st.button("🔄 Process Documents", key="process_btn"):
-            with st.spinner("Processing…"):
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-
-                def update_progress(pct, msg):
-                    progress_bar.progress(pct)
-                    status_text.caption(msg)
-
-                num_docs, num_chunks = assistant.ingest_pdfs(
-                    uploaded_files, progress_callback=update_progress
-                )
-                progress_bar.progress(1.0)
-                status_text.caption("✅ Complete!")
-
-            st.success(f"Indexed **{num_docs}** document(s) → **{num_chunks}** chunks")
-            st.session_state.processed = True
-
-    st.markdown("---")
-
-    # Stats
+    # ── Catalogue stats ────────────────────────────────────────────
     st.markdown("### 📊 Catalogue")
-    col1, col2 = st.columns(2)
-    with col1:
+    scol1, scol2 = st.columns(2)
+    with scol1:
         st.markdown(f"""
         <div class="status-card">
             <div class="number">{len(assistant.indexed_files)}</div>
             <div class="label">Documents</div>
         </div>
         """, unsafe_allow_html=True)
-    with col2:
+    with scol2:
         st.markdown(f"""
         <div class="status-card">
             <div class="number">{assistant.total_chunks}</div>
@@ -773,9 +802,18 @@ with st.sidebar:
         </div>
         """, unsafe_allow_html=True)
 
-    # Indexed files list
+    chat_count = len(st.session_state.chat_history)
+    qa_only = sum(1 for e in st.session_state.chat_history if e.get("mode") == "qa")
+    st.markdown(f"""
+    <div class="status-card" style="margin-top:0.5rem;">
+        <div class="number">{chat_count}</div>
+        <div class="label">Conversations</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Indexed files ──────────────────────────────────────────────
     if assistant.indexed_files:
-        st.markdown("### � Volumes on the Shelf")
+        st.markdown("### 📜 Volumes on the Shelf")
         items = "".join(
             f"<li>📖 {fname}</li>" for fname in assistant.indexed_files
         )
@@ -786,22 +824,108 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # Clear button
-    if st.button("🗑️ Clear All Data", key="clear_btn"):
-        assistant.clear_vectorstore()
-        st.session_state.chat_history = []
-        st.session_state.processed = False
-        st.rerun()
+    # ── Recent questions ───────────────────────────────────────────
+    if st.session_state.chat_history:
+        st.markdown("### 🕰️ Recent Questions")
+        for entry in reversed(st.session_state.chat_history[-5:]):
+            q = entry.get("query", "")
+            short = q if len(q) <= 60 else q[:57] + "…"
+            mode_emoji = {
+                "qa": "❓", "summarize": "📝", "mcq": "📋", "eli5": "💡"
+            }.get(entry.get("mode", "qa"), "❓")
+            st.markdown(
+                f"<div style='font-size:0.82rem; color:#cbd5e1; "
+                f"padding:0.3rem 0.5rem; margin:0.25rem 0; "
+                f"background:rgba(212,168,75,0.05); "
+                f"border-left:2px solid rgba(212,168,75,0.4); "
+                f"border-radius:0 4px 4px 0;'>"
+                f"{mode_emoji}  {short}</div>",
+                unsafe_allow_html=True,
+            )
 
-    # Footer
+        # Export chat as markdown
+        chat_md_lines = ["# AI Study Assistant — Chat Export\n"]
+        for i, entry in enumerate(st.session_state.chat_history, 1):
+            mode_label = {
+                "qa": "Inquire", "summarize": "Summarise",
+                "mcq": "Quiz Me", "eli5": "Explain Simply",
+            }.get(entry.get("mode", "qa"), "Inquire")
+            chat_md_lines.append(f"## Q{i} — {mode_label}\n")
+            chat_md_lines.append(f"**Question:** {entry.get('query', '')}\n")
+            chat_md_lines.append(f"**Answer:**\n\n{entry.get('answer', '')}\n")
+            srcs = entry.get("sources", [])
+            if srcs:
+                chat_md_lines.append("**Sources:** " + ", ".join(srcs) + "\n")
+            chat_md_lines.append("\n---\n")
+        chat_md = "\n".join(chat_md_lines)
+
+        st.download_button(
+            "💾 Export Chat (.md)",
+            data=chat_md,
+            file_name="ai_study_assistant_chat.md",
+            mime="text/markdown",
+            key="export_chat_btn",
+            use_container_width=True,
+        )
+
+        if st.button("🧹 Clear Chat History", key="clear_chat_btn",
+                     use_container_width=True):
+            st.session_state.chat_history = []
+            st.rerun()
+
+        st.markdown("---")
+
+    # ── Tips ───────────────────────────────────────────────────────
+    with st.expander("💡 Study Tips", expanded=False):
+        st.markdown(
+            """
+            - **Inquire** for fact-finding and concept explanations
+            - **Summarise** before exams to revise quickly
+            - **Quiz Me** to test recall actively
+            - **Explain Simply** when something feels too dense
+            - Upload **multiple PDFs** to query across all of them
+            - Be **specific** — "explain backpropagation in 3 steps"
+              works better than "explain backprop"
+            """
+        )
+
+    # ── About ──────────────────────────────────────────────────────
+    with st.expander("ℹ️ About", expanded=False):
+        st.markdown(
+            """
+            **AI Study Assistant** uses Retrieval-Augmented
+            Generation (RAG) to answer questions grounded in
+            YOUR uploaded PDFs — never invented.
+
+            • Cloud LLM: LLaMA-3.1-8B (via Groq)<br/>
+            • Embeddings: BGE-small (in-process)<br/>
+            • Vector store: NumPy cosine similarity<br/>
+            • UI: Streamlit + custom academic theme
+
+            [GitHub](https://github.com/mmoeedz/ai-study-assistant)
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # ── Danger zone ────────────────────────────────────────────────
+    with st.expander("⚠️ Danger Zone", expanded=False):
+        st.caption("This wipes the indexed PDFs from disk.")
+        if st.button("🗑️ Clear All Data", key="clear_btn",
+                     use_container_width=True):
+            assistant.clear_vectorstore()
+            st.session_state.chat_history = []
+            st.session_state.processed = False
+            st.rerun()
+
+    # ── Footer ─────────────────────────────────────────────────────
     st.markdown("---")
     st.markdown(
         """
         <div style='text-align:center; color:#8ea0bb; font-size:0.72rem;
                     letter-spacing:0.08em; font-style:italic; line-height:1.5;'>
             <span style='color:#d4a84b;'>✦</span><br/>
-            Powered by LLaMA&nbsp;3.1 &amp; FAISS<br/>
-            <span style='font-size:0.68rem;'>running locally via Ollama</span>
+            Powered by LLaMA&nbsp;3.1<br/>
+            <span style='font-size:0.68rem;'>via Groq Cloud</span>
         </div>
         """,
         unsafe_allow_html=True,
@@ -837,46 +961,64 @@ selected_mode_label = st.radio(
 )
 mode = MODE_OPTIONS[selected_mode_label]
 
-# ── Quick uploader (also handy on mobile where sidebar is hidden) ────
-with st.expander("📎  Upload PDFs here  (or use the sidebar)", expanded=False):
-    quick_files = st.file_uploader(
-        "Drop PDF files",
-        type=["pdf"],
-        accept_multiple_files=True,
-        key="quick_uploader",
-        label_visibility="collapsed",
-    )
-    qcol1, qcol2 = st.columns([3, 2])
-    with qcol1:
-        if quick_files:
-            st.caption(f"📄 **{len(quick_files)}** file(s) ready")
-        else:
-            st.caption("No files selected yet.")
-    with qcol2:
-        process_clicked = st.button(
-            "🔄 Process",
-            key="quick_process_btn",
-            disabled=not quick_files,
-            use_container_width=True,
+# ── Landing-page upload card (single primary upload entry point) ─────
+st.markdown(
+    """
+    <div class="upload-card-header">
+        <div class="upload-icon">📚</div>
+        <div class="upload-text">
+            <div class="upload-title">Upload your study material</div>
+            <div class="upload-sub">PDF files only · multiple supported · processed locally</div>
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+main_files = st.file_uploader(
+    "Drop PDF files",
+    type=["pdf"],
+    accept_multiple_files=True,
+    key="main_uploader",
+    label_visibility="collapsed",
+)
+
+ucol1, ucol2 = st.columns([3, 2])
+with ucol1:
+    if main_files:
+        st.caption(f"📎 **{len(main_files)}** file(s) ready to process")
+    elif assistant.indexed_files:
+        st.caption(
+            f"📚 **{len(assistant.indexed_files)}** document(s) already indexed — "
+            f"upload more above or just start chatting below."
         )
+    else:
+        st.caption("Drop one or more PDFs to begin.")
+with ucol2:
+    main_process_clicked = st.button(
+        "🔄 Process Documents",
+        key="main_process_btn",
+        disabled=not main_files,
+        use_container_width=True,
+    )
 
-    if process_clicked and quick_files:
-        with st.spinner("Processing…"):
-            qprogress = st.progress(0)
-            qstatus = st.empty()
+if main_process_clicked and main_files:
+    with st.spinner("Processing…"):
+        mprogress = st.progress(0)
+        mstatus = st.empty()
 
-            def _qcb(pct, msg):
-                qprogress.progress(pct)
-                qstatus.caption(msg)
+        def _mcb(pct, msg):
+            mprogress.progress(pct)
+            mstatus.caption(msg)
 
-            num_docs, num_chunks = assistant.ingest_pdfs(
-                quick_files, progress_callback=_qcb
-            )
-            qprogress.progress(1.0)
-            qstatus.caption("✅ Complete!")
-        st.success(f"Indexed **{num_docs}** document(s) → **{num_chunks}** chunks")
-        st.session_state.processed = True
-        st.rerun()
+        num_docs, num_chunks = assistant.ingest_pdfs(
+            main_files, progress_callback=_mcb
+        )
+        mprogress.progress(1.0)
+        mstatus.caption("✅ Complete!")
+    st.success(f"Indexed **{num_docs}** document(s) → **{num_chunks}** chunks")
+    st.session_state.processed = True
+    st.rerun()
 
 st.markdown("---")
 
@@ -888,11 +1030,9 @@ if not st.session_state.chat_history and not assistant.indexed_files:
         <div class="emblem">⚜</div>
         <h3>Welcome to your AI Study Assistant</h3>
         <div class="subtitle">"Lege, perlege, relege" — read, study, read again</div>
-        <p>Place your study materials in <em>The Library</em> on the left,
-        then converse with them through one of the four academic modes below.
-        <br/><span style="display:inline-block; margin-top:0.6rem; font-size:0.85rem;
-        color:#9b7532; font-style:italic;">📱 On mobile? Tap the
-        <strong>☰ icon</strong> at the top-left to open The Library.</span></p>
+        <p>Pick a mode above, upload your PDFs in the gold card, and start
+        asking questions. The sidebar (<strong>☰</strong> at the top-left)
+        holds your stats, recent questions, and chat export.</p>
         <div class="feature-grid">
             <div class="feature-item">
                 <div class="emoji">❓</div>

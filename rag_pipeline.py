@@ -161,30 +161,58 @@ class SimpleVectorStore:
         return [self.documents[i] for i in indices]
 
     def save(self, path: str) -> None:
-        """Persist to disk."""
+        """Persist to disk using JSON + NumPy (no pickle)."""
         os.makedirs(path, exist_ok=True)
-        data = {
-            "embeddings": self.embeddings,
-            "documents": self.documents,
-        }
-        with open(os.path.join(path, "vectorstore.pkl"), "wb") as f:
-            pickle.dump(data, f)
+        # Sanitise every document into plain Python primitives
+        docs_serialisable = []
+        for d in self.documents:
+            docs_serialisable.append({
+                "page_content": str(d.page_content) if d.page_content is not None else "",
+                "metadata": {
+                    k: (str(v) if not isinstance(v, (int, float, bool, type(None))) else v)
+                    for k, v in (d.metadata or {}).items()
+                },
+            })
+        with open(os.path.join(path, "documents.json"), "w", encoding="utf-8") as f:
+            json.dump(docs_serialisable, f, ensure_ascii=False)
+        if self.embeddings is not None:
+            np.save(os.path.join(path, "embeddings.npy"), self.embeddings)
 
     @classmethod
     def load(cls, path: str) -> Optional["SimpleVectorStore"]:
-        """Load from disk."""
+        """Load from disk; supports new JSON+npy format and falls back to old pickle."""
+        json_path = os.path.join(path, "documents.json")
+        npy_path = os.path.join(path, "embeddings.npy")
+        if os.path.exists(json_path) and os.path.exists(npy_path):
+            try:
+                store = cls()
+                with open(json_path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                store.documents = [
+                    Document(
+                        page_content=d.get("page_content", ""),
+                        metadata=d.get("metadata", {}) or {},
+                    )
+                    for d in raw
+                ]
+                store.embeddings = np.load(npy_path)
+                return store
+            except Exception:
+                return None
+
+        # Backwards-compat: old pickle format
         pkl_path = os.path.join(path, "vectorstore.pkl")
-        if not os.path.exists(pkl_path):
-            return None
-        try:
-            store = cls()
-            with open(pkl_path, "rb") as f:
-                data = pickle.load(f)
-            store.embeddings = data["embeddings"]
-            store.documents = data["documents"]
-            return store
-        except Exception:
-            return None
+        if os.path.exists(pkl_path):
+            try:
+                store = cls()
+                with open(pkl_path, "rb") as f:
+                    data = pickle.load(f)
+                store.embeddings = data["embeddings"]
+                store.documents = data["documents"]
+                return store
+            except Exception:
+                return None
+        return None
 
 
 # ── LLM Clients ──────────────────────────────────────────────────────
@@ -321,18 +349,29 @@ class StudyAssistant:
     @staticmethod
     def extract_text_from_pdf(file_bytes: bytes, filename: str) -> List[Document]:
         """Extract text from a PDF and return a list of Documents
-        (one per page) with metadata."""
+        (one per page) with metadata. All text is forced to plain str so
+        nothing strange (bytes, custom subclasses) sneaks into pickling/JSON."""
         documents = []
         reader = PdfReader(io.BytesIO(file_bytes))
         for page_num, page in enumerate(reader.pages, start=1):
-            text = page.extract_text() or ""
-            if text.strip():
+            try:
+                raw = page.extract_text()
+            except Exception:
+                raw = ""
+            # Coerce bytes / custom string subclasses to plain str
+            if raw is None:
+                raw = ""
+            elif isinstance(raw, bytes):
+                raw = raw.decode("utf-8", errors="replace")
+            else:
+                raw = str(raw)
+            if raw.strip():
                 documents.append(
                     Document(
-                        page_content=text,
+                        page_content=raw,
                         metadata={
-                            "source": filename,
-                            "page": page_num,
+                            "source": str(filename),
+                            "page": int(page_num),
                         },
                     )
                 )

@@ -50,29 +50,47 @@ Provide your response in EXACTLY this structure (use the emoji headings):
 SUMMARIZE_PROMPT = f"""
 {_BASE_RULES}
 
+EXTRA RULES FOR SUMMARIES (this is for the student's EXAM — be exhaustive):
+- Read EVERY chunk in the context before writing.
+- Mention EVERY distinct technical term, named method, definition, and
+  formula that appears in the context. DO NOT silently skip anything.
+- Aim for AT LEAST 10–15 bullet points across the Key Concepts and
+  Techniques sections combined when the material is rich.
+- Include any short examples, formulas, or step lists that appear in the
+  context — those are likely exam questions.
+
 Context:
 {{context}}
 
 Request:
 {{question}}
 
-Provide a concise yet thorough summary of the material in this structure:
+Provide a thorough, EXAM-READY summary in EXACTLY this structure:
 
 ### 📝 Summary:
-[Concise overview of the main content]
+[A 3–5 sentence overview naming the main topic and listing the high-level
+areas covered.]
 
 ### 🎯 Main Themes:
 • Theme 1
 • Theme 2
 • Theme 3
+• …(add more themes if the context contains more)
 
-### 📌 Key Concepts:
-• Concept 1 — brief explanation
-• Concept 2 — brief explanation
-• Concept 3 — brief explanation
+### 📌 Key Concepts (one bullet for EVERY concept named in the context):
+• **Concept 1** — short definition
+• **Concept 2** — short definition
+• **Concept 3** — short definition
+• …(continue for every concept; do not stop at 3 if there are more)
 
-### 💡 Important Details:
-[Any critical details, formulas, or definitions worth highlighting]
+### 🔧 Techniques / Methods Mentioned:
+• **Method 1** — what it does and when to use it
+• **Method 2** — what it does and when to use it
+• …(every named technique in the context)
+
+### 💡 Important Details for the Exam:
+[Critical formulas, edge-cases, definitions, or worked examples worth
+memorising.]
 """.strip()
 
 

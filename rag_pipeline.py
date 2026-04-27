@@ -570,12 +570,14 @@ class StudyAssistant:
                 [],
             )
 
-        # Retrieve — pull MANY more chunks for broad modes so we don't
-        # miss any material. For Q&A we keep the focused top-k.
-        if mode in ("summarize", "mcq"):
-            # For summary/quiz modes, retrieve up to ~30 chunks (or all
-            # if the index is smaller) so the model sees the whole picture.
-            broad_k = min(30, self.total_chunks or 30)
+        # Special path: SUMMARIZE uses map-reduce so we cover EVERY chunk
+        # (the request body is too big to send everything in one call).
+        if mode == "summarize" and self.vectorstore is not None:
+            return self._summarize_map_reduce(query)
+
+        # Retrieve — broader top-k for MCQ, focused for Q&A / ELI5.
+        if mode == "mcq":
+            broad_k = min(40, self.total_chunks or 40)
             docs = self.retrieve(query, k=broad_k)
         else:
             docs = self.retrieve(query)
@@ -608,3 +610,92 @@ class StudyAssistant:
             num_ctx=config.LLM_NUM_CTX,
         )
         return response, docs
+
+    # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
+    def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:
+        """Summarise the entire indexed corpus in two passes:
+           1) MAP — split chunks into batches, extract bullet points per batch
+           2) REDUCE — merge all bullet points into a single exam-ready summary
+        """
+        all_docs = self.vectorstore.documents
+        if not all_docs:
+            return ("The answer is not available in the provided material.", [])
+
+        # MAP step — chunk everything into batches that fit safely in one request
+        BATCH_SIZE = 12  # ~12 chunks × ~1000 chars ≈ 12k chars per call (well under Groq's payload cap)
+        batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, len(all_docs), BATCH_SIZE)]
+
+        partial_extracts: list[str] = []
+        for batch_idx, batch in enumerate(batches, 1):
+            batch_text = "\n\n---\n\n".join(
+                f"[Chunk {j} | {d.metadata.get('source', '?')}, "
+                f"Page {d.metadata.get('page', '?')}]\n{d.page_content}"
+                for j, d in enumerate(batch, 1)
+            )
+            map_prompt = (
+                "You are extracting study notes from part of a course PDF. "
+                "List every distinct concept, technique, definition, formula, "
+                "and named method that appears in the text below. "
+                "Output ONLY a bullet list — no introduction, no conclusion. "
+                "Use the exact terminology from the source.\n\n"
+                f"TEXT:\n{batch_text}\n\n"
+                "BULLET LIST OF EVERY CONCEPT IN THIS TEXT:"
+            )
+            try:
+                bullets = self.llm.generate(
+                    prompt=map_prompt,
+                    model=config.LLM_MODEL,
+                    temperature=0.1,  # very factual
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+                partial_extracts.append(bullets.strip())
+            except Exception as e:
+                # Don't fail the whole summary because one batch hit a transient error
+                partial_extracts.append(f"[batch {batch_idx} failed: {e}]")
+
+        merged_bullets = "\n\n".join(partial_extracts)
+
+        # REDUCE step — collapse the merged bullets into the polished output
+        reduce_prompt = (
+            "You are an AI Study Assistant building EXAM-READY notes for a "
+            "student. Below is a comprehensive list of bullet points extracted "
+            "from EVERY chunk of their course PDF. This is for their EXAM — "
+            "do NOT lose information.\n\n"
+            "ABSOLUTE RULES:\n"
+            "1. Every distinct technical term that appears in the bullets "
+            "below MUST appear somewhere in your final output.\n"
+            "2. Use the EXACT terminology from the bullets — do not rename "
+            "concepts (e.g. keep 'stopwords' as 'stopwords', not 'common "
+            "words').\n"
+            "3. Do not invent anything not in the bullets.\n"
+            "4. Do not merge two distinct concepts into one bullet.\n"
+            "5. If a term appears in multiple bullets, list it ONCE in Key "
+            "Concepts and ONCE in Techniques (if applicable).\n\n"
+            f"STUDENT'S REQUEST: {query}\n\n"
+            f"EXTRACTED BULLETS FROM ALL CHUNKS:\n{merged_bullets}\n\n"
+            "Now produce the final summary in EXACTLY this structure:\n\n"
+            "### 📝 Summary:\n"
+            "[3–5 sentence overview naming the main topic and the high-level "
+            "areas covered.]\n\n"
+            "### 🎯 Main Themes:\n"
+            "• Theme 1\n• Theme 2\n• Theme 3\n• …(more if needed)\n\n"
+            "### 📌 Key Concepts:\n"
+            "[ONE bullet per distinct concept above. NEVER drop a term. Use "
+            "the source's wording. Aim for 15+ bullets.]\n"
+            "• **Concept** — short definition\n"
+            "• …\n\n"
+            "### 🔧 Techniques / Methods:\n"
+            "[ONE bullet per technique. Same rules — do not drop, do not "
+            "rename. Aim for 10+ bullets.]\n"
+            "• **Method** — what it does\n"
+            "• …\n\n"
+            "### 💡 Important Details for the Exam:\n"
+            "[Formulas, edge-cases, examples, step-by-step procedures.]"
+        )
+        final = self.llm.generate(
+            prompt=reduce_prompt,
+            model=config.LLM_MODEL,
+            temperature=0.2,
+            num_ctx=config.LLM_NUM_CTX,
+        )
+        return final, all_docs

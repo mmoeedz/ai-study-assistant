@@ -837,6 +837,47 @@ selected_mode_label = st.radio(
 )
 mode = MODE_OPTIONS[selected_mode_label]
 
+# ── Quick uploader (also handy on mobile where sidebar is hidden) ────
+with st.expander("📎  Upload PDFs here  (or use the sidebar)", expanded=False):
+    quick_files = st.file_uploader(
+        "Drop PDF files",
+        type=["pdf"],
+        accept_multiple_files=True,
+        key="quick_uploader",
+        label_visibility="collapsed",
+    )
+    qcol1, qcol2 = st.columns([3, 2])
+    with qcol1:
+        if quick_files:
+            st.caption(f"📄 **{len(quick_files)}** file(s) ready")
+        else:
+            st.caption("No files selected yet.")
+    with qcol2:
+        process_clicked = st.button(
+            "🔄 Process",
+            key="quick_process_btn",
+            disabled=not quick_files,
+            use_container_width=True,
+        )
+
+    if process_clicked and quick_files:
+        with st.spinner("Processing…"):
+            qprogress = st.progress(0)
+            qstatus = st.empty()
+
+            def _qcb(pct, msg):
+                qprogress.progress(pct)
+                qstatus.caption(msg)
+
+            num_docs, num_chunks = assistant.ingest_pdfs(
+                quick_files, progress_callback=_qcb
+            )
+            qprogress.progress(1.0)
+            qstatus.caption("✅ Complete!")
+        st.success(f"Indexed **{num_docs}** document(s) → **{num_chunks}** chunks")
+        st.session_state.processed = True
+        st.rerun()
+
 st.markdown("---")
 
 # ── Chat history display ─────────────────────────────────────────────

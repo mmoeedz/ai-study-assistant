@@ -290,21 +290,44 @@ class GroqClient:
         self, prompt: str, model: str,
         temperature: float = 0.3, num_ctx: int = 4096,  # num_ctx kept for sig parity
     ) -> str:
-        resp = requests.post(
-            f"{self.base_url}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": temperature,
-            },
-            timeout=120,
-        )
-        resp.raise_for_status()
-        return resp.json()["choices"][0]["message"]["content"]
+        import time as _t  # local import to avoid name shadow
+        last_exc = None
+        for attempt in range(4):  # up to 4 attempts on 429 / transient errors
+            resp = requests.post(
+                f"{self.base_url}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "temperature": temperature,
+                },
+                timeout=120,
+            )
+            if resp.status_code == 429:
+                # Honour Retry-After header if present, else exponential back-off
+                wait = int(resp.headers.get("retry-after", "0")) or (2 ** attempt)
+                _t.sleep(min(wait, 30))
+                last_exc = requests.exceptions.HTTPError(
+                    f"429 Too Many Requests (attempt {attempt + 1})", response=resp
+                )
+                continue
+            try:
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
+            except requests.exceptions.HTTPError as e:
+                last_exc = e
+                # 5xx errors → retry once or twice with backoff
+                if 500 <= resp.status_code < 600 and attempt < 2:
+                    _t.sleep(2 ** attempt)
+                    continue
+                raise
+        # If we exhausted retries on 429s, raise the last one
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("Groq generate(): exhausted retries with no response")
 
 
 # ── Embedding backends ───────────────────────────────────────────────
@@ -547,8 +570,15 @@ class StudyAssistant:
                 [],
             )
 
-        # Retrieve
-        docs = self.retrieve(query)
+        # Retrieve — pull MANY more chunks for broad modes so we don't
+        # miss any material. For Q&A we keep the focused top-k.
+        if mode in ("summarize", "mcq"):
+            # For summary/quiz modes, retrieve up to ~30 chunks (or all
+            # if the index is smaller) so the model sees the whole picture.
+            broad_k = min(30, self.total_chunks or 30)
+            docs = self.retrieve(query, k=broad_k)
+        else:
+            docs = self.retrieve(query)
 
         if not docs:
             return (

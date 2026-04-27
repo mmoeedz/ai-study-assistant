@@ -645,8 +645,49 @@ hr {
     animation: slideRight 0.4s ease-out;
 }
 
-/* ── Hide Streamlit default chrome ──────────────────────── */
-#MainMenu, footer, header[data-testid="stHeader"] { visibility: hidden; }
+/* ── Hide Streamlit default chrome (carefully) ──────────── */
+/* Hide hamburger menu + footer, but KEEP the header so the
+   sidebar-toggle button remains visible on mobile.            */
+#MainMenu, footer { visibility: hidden; }
+
+/* Make the header transparent so it blends with the app
+   background, and keep its sidebar-toggle button visible.     */
+header[data-testid="stHeader"] {
+    background: transparent !important;
+    height: 2.5rem;
+}
+header[data-testid="stHeader"] [data-testid="stToolbar"] {
+    visibility: hidden;
+}
+
+/* Style the sidebar toggle (hamburger) so users can find it
+   on mobile.                                                  */
+[data-testid="collapsedControl"],
+button[kind="header"][data-testid="baseButton-headerNoPadding"],
+button[data-testid="stSidebarCollapseButton"] {
+    visibility: visible !important;
+    color: var(--gold-400) !important;
+    background: rgba(212, 168, 75, 0.1) !important;
+    border: 1px solid rgba(212, 168, 75, 0.4) !important;
+    border-radius: 6px !important;
+}
+
+/* Mobile-specific: make the sidebar toggle bigger and more
+   visible so users can find it.                               */
+@media (max-width: 768px) {
+    [data-testid="collapsedControl"],
+    button[data-testid="stSidebarCollapseButton"] {
+        background: linear-gradient(180deg, #d4a84b, #b88a2d) !important;
+        color: #1c1408 !important;
+        box-shadow: 0 4px 14px rgba(212, 168, 75, 0.35) !important;
+        font-weight: 700 !important;
+    }
+    /* Tighten header on mobile */
+    .main-header h1 { font-size: 2.1rem !important; }
+    .main-header p  { font-size: 0.9rem !important; }
+    .response-card  { padding: 1.2rem 1.3rem !important; }
+}
+
 .block-container { padding-top: 1.5rem !important; }
 </style>
 """, unsafe_allow_html=True)
@@ -807,7 +848,10 @@ if not st.session_state.chat_history and not assistant.indexed_files:
         <h3>Welcome to your AI Study Assistant</h3>
         <div class="subtitle">"Lege, perlege, relege" — read, study, read again</div>
         <p>Place your study materials in <em>The Library</em> on the left,
-        then converse with them through one of the four academic modes below.</p>
+        then converse with them through one of the four academic modes below.
+        <br/><span style="display:inline-block; margin-top:0.6rem; font-size:0.85rem;
+        color:#9b7532; font-style:italic;">📱 On mobile? Tap the
+        <strong>☰ icon</strong> at the top-left to open The Library.</span></p>
         <div class="feature-grid">
             <div class="feature-item">
                 <div class="emoji">❓</div>

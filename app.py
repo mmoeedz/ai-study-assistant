@@ -885,6 +885,8 @@ if "processed" not in st.session_state:
     st.session_state.processed = False
 if "search_query" not in st.session_state:
     st.session_state.search_query = ""
+if "renaming_id" not in st.session_state:
+    st.session_state.renaming_id = None
 
 assistant: StudyAssistant = st.session_state.assistant
 # Backwards-compat alias for the rest of the app.
@@ -962,7 +964,35 @@ with st.sidebar:
         title = chat.get("title") or "Untitled"
         msg_count = len(chat.get("messages", []))
 
-        c1, c2 = st.columns([5, 1])
+        # ── Inline rename mode ─────────────────────────────────────
+        if st.session_state.renaming_id == cid:
+            new_title = st.text_input(
+                "Rename chat",
+                value=title,
+                key=f"rename_input_{cid}",
+                label_visibility="collapsed",
+                placeholder="New chat title…",
+            )
+            rcol1, rcol2 = st.columns(2)
+            with rcol1:
+                if st.button("✓ Save", key=f"rename_save_{cid}",
+                             use_container_width=True):
+                    new_title_clean = (new_title or "").strip() or "Untitled"
+                    chat["title"] = new_title_clean
+                    save_chat(chat)
+                    if is_active:
+                        st.session_state.current_chat["title"] = new_title_clean
+                    st.session_state.renaming_id = None
+                    st.rerun()
+            with rcol2:
+                if st.button("✕ Cancel", key=f"rename_cancel_{cid}",
+                             use_container_width=True):
+                    st.session_state.renaming_id = None
+                    st.rerun()
+            continue
+
+        # ── Normal row: title + rename + delete ────────────────────
+        c1, c2, c3 = st.columns([5, 1, 1])
         with c1:
             row_label = f"{'▸ ' if is_active else ''}{title}  ·  {msg_count} msg"
             if st.button(
@@ -981,6 +1011,10 @@ with st.sidebar:
                 st.session_state.current_chat = loaded
                 st.rerun()
         with c2:
+            if st.button("✏️", key=f"chat_rename_{cid}", help="Rename this chat"):
+                st.session_state.renaming_id = cid
+                st.rerun()
+        with c3:
             if st.button("🗑", key=f"chat_del_{cid}", help="Delete this chat"):
                 delete_chat(cid)
                 if cid == current_id:

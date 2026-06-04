@@ -11,7 +11,6 @@ Embeddings:
 """
 
 import os
-import tomllib
 
 # Streamlit secrets are loaded automatically when running under Streamlit
 try:
@@ -19,19 +18,6 @@ try:
     _SECRETS = dict(st.secrets) if hasattr(st, "secrets") else {}
 except Exception:
     _SECRETS = {}
-
-if not _SECRETS:
-    secrets_path = os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        ".streamlit",
-        "secrets.toml",
-    )
-    if os.path.exists(secrets_path):
-        try:
-            with open(secrets_path, "rb") as f:
-                _SECRETS = tomllib.load(f)
-        except Exception:
-            _SECRETS = {}
 
 
 def _get(name: str, default: str = "") -> str:

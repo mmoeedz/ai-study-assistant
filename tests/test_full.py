@@ -24,7 +24,10 @@ import statistics
 from pathlib import Path
 
 # Force-load secrets the same way Streamlit does
-import tomllib
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 secrets_path = ROOT / ".streamlit" / "secrets.toml"

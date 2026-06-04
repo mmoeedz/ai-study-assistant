@@ -27,47 +27,6 @@ import config
 from prompts import PROMPT_MAP
 
 
-def _format_llm_request_error(exc: Exception) -> str:
-    """Return a user-safe error message for provider/API failures."""
-    if isinstance(exc, requests.exceptions.HTTPError):
-        response = exc.response
-        status = response.status_code if response is not None else "unknown"
-        detail = ""
-        if response is not None:
-            try:
-                payload = response.json()
-                if isinstance(payload, dict):
-                    err = payload.get("error", payload)
-                    if isinstance(err, dict):
-                        detail = str(
-                            err.get("message")
-                            or err.get("code")
-                            or err
-                        )
-                    else:
-                        detail = str(err)
-            except Exception:
-                detail = response.text[:500]
-        detail = detail or str(exc)
-        return (
-            f"⚠️ LLM request failed (HTTP {status}).\n\n"
-            f"{detail}\n\n"
-            "Please check your Groq API key, model name, rate limits, and "
-            "project permissions."
-        )
-
-    if isinstance(exc, requests.exceptions.Timeout):
-        return "⚠️ The LLM request timed out. Please try again in a moment."
-
-    if isinstance(exc, requests.exceptions.RequestException):
-        return (
-            "⚠️ Could not reach the LLM provider. Please check your internet "
-            "connection and provider settings."
-        )
-
-    return f"⚠️ Something went wrong while generating the answer: {exc}"
-
-
 # ── Data classes ──────────────────────────────────────────────────────
 
 @dataclass
@@ -138,18 +97,21 @@ class RecursiveCharacterTextSplitter:
         return results
 
     def _merge_chunks(self, chunks: List[str]) -> List[str]:
-        """Add overlap between adjacent chunks."""
+        """Add overlap between adjacent chunks, ensuring no chunk exceeds size."""
         if not chunks or self.chunk_overlap == 0:
             return chunks
 
         merged = []
         for i, chunk in enumerate(chunks):
             if i > 0 and self.chunk_overlap > 0:
-                # Prepend overlap from previous chunk
+                # Prepend the last N characters from the previous chunk for context
                 prev = chunks[i - 1]
-                overlap_text = prev[-self.chunk_overlap :]
-                chunk = overlap_text + chunk
-                # Trim if too long
+                # Only take as much overlap as exists in the previous chunk
+                overlap_len = min(self.chunk_overlap, len(prev))
+                overlap_text = prev[-overlap_len:] if overlap_len > 0 else ""
+                if overlap_text:
+                    chunk = overlap_text + chunk
+                # Ensure chunk doesn't exceed size limit by trimming from the end
                 if len(chunk) > self.chunk_size:
                     chunk = chunk[: self.chunk_size]
             merged.append(chunk)
@@ -191,10 +153,21 @@ class SimpleVectorStore:
             return []
 
         q = np.array(query_vector, dtype=np.float32)
-        # Cosine similarity
-        norms = np.linalg.norm(self.embeddings, axis=1) * np.linalg.norm(q)
-        norms = np.where(norms == 0, 1e-10, norms)  # Avoid division by zero
-        similarities = self.embeddings @ q / norms
+        # Normalize vectors to unit length before computing dot product (true cosine similarity)
+        q_norm = np.linalg.norm(q)
+        if q_norm == 0:
+            return []  # Query vector is all zeros, can't compute similarity
+        
+        q_normalized = q / q_norm
+        
+        # Normalize embeddings row-wise
+        embedding_norms = np.linalg.norm(self.embeddings, axis=1, keepdims=True)
+        # Avoid division by zero for zero vectors in the store
+        embedding_norms = np.where(embedding_norms == 0, 1, embedding_norms)
+        embeddings_normalized = self.embeddings / embedding_norms
+        
+        # Compute cosine similarities via dot product
+        similarities = embeddings_normalized @ q_normalized
 
         # Get top-k indices
         top_k = min(k, len(self.documents))
@@ -287,13 +260,16 @@ class OllamaClient:
     def embed(self, texts: List[str], model: str) -> List[List[float]]:
         embeddings = []
         for text in texts:
-            resp = requests.post(
-                f"{self.base_url}/api/embed",
-                json={"model": model, "input": text},
-                timeout=120,
-            )
-            resp.raise_for_status()
-            embeddings.append(resp.json()["embeddings"][0])
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/api/embed",
+                    json={"model": model, "input": text},
+                    timeout=120,
+                )
+                resp.raise_for_status()
+                embeddings.append(resp.json()["embeddings"][0])
+            except (requests.exceptions.RequestException, KeyError, IndexError) as e:
+                raise RuntimeError(f"Failed to embed text with Ollama: {e}")
         return embeddings
 
     def embed_single(self, text: str, model: str) -> List[float]:
@@ -334,45 +310,45 @@ class GroqClient:
         import time as _t  # local import to avoid name shadow
         last_exc = None
         for attempt in range(4):  # up to 4 attempts on 429 / transient errors
-            resp = requests.post(
-                f"{self.base_url}/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": temperature,
-                },
-                timeout=120,
-            )
-            if resp.status_code == 429:
-                # Honour Retry-After header if present, else exponential back-off
-                wait = int(resp.headers.get("retry-after", "0")) or (2 ** attempt)
-                _t.sleep(min(wait, 30))
-                last_exc = requests.exceptions.HTTPError(
-                    f"429 Too Many Requests (attempt {attempt + 1})", response=resp
+            try:
+                resp = requests.post(
+                    f"{self.base_url}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": temperature,
+                    },
+                    timeout=120,
                 )
-                continue
-            if resp.status_code >= 400:
-                # 5xx errors → retry once or twice with backoff
-                if 500 <= resp.status_code < 600 and attempt < 2:
+                if resp.status_code == 429:
+                    # Honour Retry-After header if present, else exponential back-off
+                    wait = int(resp.headers.get("retry-after", "0")) or (2 ** attempt)
+                    _t.sleep(min(wait, 30))
                     last_exc = requests.exceptions.HTTPError(
-                        f"{resp.status_code}: {resp.text[:500]}", response=resp
+                        f"429 Too Many Requests (attempt {attempt + 1})", response=resp
                     )
+                    continue
+                try:
+                    resp.raise_for_status()
+                    return resp.json()["choices"][0]["message"]["content"]
+                except requests.exceptions.HTTPError as e:
+                    last_exc = e
+                    # 5xx errors → retry once or twice with backoff
+                    if 500 <= resp.status_code < 600 and attempt < 2:
+                        _t.sleep(2 ** attempt)
+                        continue
+                    raise
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                # Network errors - retry with backoff
+                last_exc = e
+                if attempt < 3:
                     _t.sleep(2 ** attempt)
                     continue
-                # Surface the actual API error message for easier debugging
-                try:
-                    detail = resp.json()
-                except Exception:
-                    detail = resp.text[:500]
-                raise requests.exceptions.HTTPError(
-                    f"Groq API error {resp.status_code}: {detail}",
-                    response=resp,
-                )
-            return resp.json()["choices"][0]["message"]["content"]
+                raise
         # If we exhausted retries on 429s, raise the last one
         if last_exc:
             raise last_exc
@@ -652,15 +628,12 @@ class StudyAssistant:
         prompt = prompt_template.format(context=context, question=query)
 
         # Call LLM (provider-agnostic)
-        try:
-            response = self.llm.generate(
-                prompt=prompt,
-                model=config.LLM_MODEL,
-                temperature=config.LLM_TEMPERATURE,
-                num_ctx=config.LLM_NUM_CTX,
-            )
-        except Exception as exc:
-            return _format_llm_request_error(exc), docs
+        response = self.llm.generate(
+            prompt=prompt,
+            model=config.LLM_MODEL,
+            temperature=config.LLM_TEMPERATURE,
+            num_ctx=config.LLM_NUM_CTX,
+        )
         return response, docs
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
@@ -744,13 +717,10 @@ class StudyAssistant:
             "### 💡 Important Details for the Exam:\n"
             "[Formulas, edge-cases, examples, step-by-step procedures.]"
         )
-        try:
-            final = self.llm.generate(
-                prompt=reduce_prompt,
-                model=config.LLM_MODEL,
-                temperature=0.2,
-                num_ctx=config.LLM_NUM_CTX,
-            )
-        except Exception as exc:
-            return _format_llm_request_error(exc), all_docs
+        final = self.llm.generate(
+            prompt=reduce_prompt,
+            model=config.LLM_MODEL,
+            temperature=0.2,
+            num_ctx=config.LLM_NUM_CTX,
+        )
         return final, all_docs

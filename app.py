@@ -1062,11 +1062,15 @@ with st.sidebar:
                 "mcq": "Quiz Me", "eli5": "Explain Simply",
             }.get(entry.get("mode", "qa"), "Inquire")
             chat_md_lines.append(f"## Q{i} — {mode_label}\n")
-            chat_md_lines.append(f"**Question:** {entry.get('query', '')}\n")
+            # Escape special markdown characters in the query
+            query_escaped = entry.get("query", "").replace("\\", "\\\\").replace("`", "\\`")
+            chat_md_lines.append(f"**Question:** {query_escaped}\n")
             chat_md_lines.append(f"**Answer:**\n\n{entry.get('answer', '')}\n")
             srcs = entry.get("sources", [])
             if srcs:
-                chat_md_lines.append("**Sources:** " + ", ".join(srcs) + "\n")
+                # Escape source filenames
+                escaped_srcs = [s.replace("`", "\\`") for s in srcs]
+                chat_md_lines.append("**Sources:** " + ", ".join(escaped_srcs) + "\n")
             chat_md_lines.append("\n---\n")
         chat_md = "\n".join(chat_md_lines)
 

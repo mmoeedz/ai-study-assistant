@@ -1306,10 +1306,21 @@ if prompt := st.chat_input(
             with st.spinner("Consulting the manuscripts…"):
                 answer, source_docs = assistant.generate(prompt, mode=mode)
 
-            # Display formatted answer
-            st.markdown(f'<div class="response-card">{answer}</div>', unsafe_allow_html=True)
+            # Display formatted answer with Read More expansion
+            # Show ~80% initially, expand for full details
+            truncate_at = int(len(answer) * 0.8)
+            truncated_answer = answer[:truncate_at]
+            
+            # Check if truncation happened
+            needs_expansion = len(answer) > len(truncated_answer) + 100
+            
+            if needs_expansion:
+                with st.expander("📖 View Full Answer", expanded=True):
+                    st.markdown(f'<div class="response-card">{answer}</div>', unsafe_allow_html=True)
+            else:
+                st.markdown(f'<div class="response-card">{answer}</div>', unsafe_allow_html=True)
 
-            # Source references
+            # Source references with detailed view
             source_labels = []
             source_texts = []
             if source_docs:
@@ -1322,14 +1333,24 @@ if prompt := st.chat_input(
                 sources_html = " ".join(
                     f'<span class="source-chip">📄 {s}</span>' for s in source_labels
                 )
-                with st.expander("📖 View Sources"):
+                with st.expander("📖 View Detailed Sources", expanded=False):
                     st.markdown(sources_html, unsafe_allow_html=True)
+                    st.markdown("---")
+                    
                     for i, doc in enumerate(source_docs, 1):
-                        st.markdown(f"**Chunk {i}:**")
-                        st.caption(
-                            doc.page_content[:500]
-                            + ("…" if len(doc.page_content) > 500 else "")
-                        )
+                        src = doc.metadata.get("source", "Unknown")
+                        page = doc.metadata.get("page", "?")
+                        content = doc.page_content
+                        
+                        # Show 80% of content initially
+                        preview_len = int(len(content) * 0.8)
+                        preview = content[:preview_len] + "…" if len(content) > preview_len else content
+                        
+                        with st.expander(f"**📌 Chunk {i}** — {src} (page {page})", expanded=False):
+                            st.markdown(preview if preview != content else content, unsafe_allow_html=False)
+                            if len(content) > preview_len:
+                                with st.expander("📖 Read Full Chunk"):
+                                    st.markdown(content, unsafe_allow_html=False)
 
             # Save to history (current chat thread + persist to disk)
             st.session_state.current_chat["messages"].append({

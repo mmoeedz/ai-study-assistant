@@ -54,6 +54,10 @@ LLM_TEMPERATURE = 0.3          # Low temperature for factual answers
 LLM_TOP_P = 0.9
 LLM_NUM_CTX = 4096             # Context window
 
+# ── Payload Size Limits (prevent 413 errors on Groq) ──────────────────
+MAX_CONTEXT_CHARS = 12000      # Max context size in prompt (chars)
+MAX_CHUNK_DISPLAY = 400        # Truncate each chunk to this (chars)
+
 # ── Embedding Settings ───────────────────────────────────────────────
 EMBEDDING_MODEL = (
     "BAAI/bge-small-en-v1.5" if LLM_PROVIDER == "groq" else OLLAMA_EMBEDDING_MODEL

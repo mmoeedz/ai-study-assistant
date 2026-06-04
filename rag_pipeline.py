@@ -345,7 +345,12 @@ class GroqClient:
                     raise RuntimeError(f"Failed to parse LLM response: {e}")
                 except requests.exceptions.HTTPError as e:
                     # Handle specific error codes
-                    if resp.status_code == 401:
+                    if resp.status_code == 413:
+                        raise RuntimeError(
+                            "📦 Request too large. The document context exceeds API limits. "
+                            "Try uploading fewer or shorter PDFs."
+                        )
+                    elif resp.status_code == 401:
                         raise RuntimeError(
                             "🔑 Invalid or expired Groq API key. "
                             "Please check your GROQ_API_KEY in .streamlit/secrets.toml"
@@ -631,10 +636,10 @@ class StudyAssistant:
         if mode == "summarize" and self.vectorstore is not None:
             return self._summarize_map_reduce(query)
 
-        # Retrieve — broader top-k for MCQ, focused for Q&A / ELI5.
+        # Retrieve — smaller k to prevent 413 payload errors
         if mode == "mcq":
-            broad_k = min(40, self.total_chunks or 40)
-            docs = self.retrieve(query, k=broad_k)
+            k = min(8, self.total_chunks or 8)  # Reduced from 40
+            docs = self.retrieve(query, k=k)
         else:
             docs = self.retrieve(query)
 
@@ -644,14 +649,35 @@ class StudyAssistant:
                 [],
             )
 
-        # Build context string
+        # Build context string with truncation to prevent 413 Payload Too Large errors
         context_parts = []
+        context_size = 0
+        
         for i, doc in enumerate(docs, 1):
             source = doc.metadata.get("source", "Unknown")
             page = doc.metadata.get("page", "?")
-            context_parts.append(
-                f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}"
+            
+            # Truncate chunk content to prevent payload bloat
+            truncated_content = doc.page_content[:config.MAX_CHUNK_DISPLAY]
+            if len(doc.page_content) > config.MAX_CHUNK_DISPLAY:
+                truncated_content += "…"
+            
+            chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{truncated_content}"
+            chunk_size = len(chunk_text)
+            
+            # Stop adding chunks if we exceed max context size
+            if context_size + chunk_size > config.MAX_CONTEXT_CHARS:
+                break
+            
+            context_parts.append(chunk_text)
+            context_size += chunk_size
+
+        if not context_parts:
+            return (
+                "The answer is not available in the provided material.",
+                [],
             )
+
         context = "\n\n---\n\n".join(context_parts)
 
         # Select prompt template
@@ -678,16 +704,23 @@ class StudyAssistant:
             return ("The answer is not available in the provided material.", [])
 
         # MAP step — chunk everything into batches that fit safely in one request
-        BATCH_SIZE = 12  # ~12 chunks × ~1000 chars ≈ 12k chars per call (well under Groq's payload cap)
+        # Smaller batch size to prevent 413 Payload Too Large errors
+        BATCH_SIZE = 6  # ~6 chunks × ~400 chars = ~2.4k chars per call (safe margin)
         batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, len(all_docs), BATCH_SIZE)]
 
         partial_extracts: list[str] = []
         for batch_idx, batch in enumerate(batches, 1):
-            batch_text = "\n\n---\n\n".join(
-                f"[Chunk {j} | {d.metadata.get('source', '?')}, "
-                f"Page {d.metadata.get('page', '?')}]\n{d.page_content}"
-                for j, d in enumerate(batch, 1)
-            )
+            batch_text_parts = []
+            for j, d in enumerate(batch, 1):
+                chunk_content = d.page_content[:config.MAX_CHUNK_DISPLAY]
+                if len(d.page_content) > config.MAX_CHUNK_DISPLAY:
+                    chunk_content += "…"
+                batch_text_parts.append(
+                    f"[Chunk {j} | {d.metadata.get('source', '?')}, "
+                    f"Page {d.metadata.get('page', '?')}]\n{chunk_content}"
+                )
+            batch_text = "\n\n---\n\n".join(batch_text_parts)
+            
             map_prompt = (
                 "You are extracting study notes from part of a course PDF. "
                 "List every distinct concept, technique, definition, formula, "

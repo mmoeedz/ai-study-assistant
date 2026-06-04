@@ -610,6 +610,12 @@ class StudyAssistant:
         k = k or config.RETRIEVAL_TOP_K
         query_vec = self._embed_single(query)
         return self.vectorstore.search(query_vec, k=k)
+    
+    def retrieve_all(self) -> List[Document]:
+        """Retrieve ALL documents (for comprehensive summarization)."""
+        if self.vectorstore is None:
+            return []
+        return self.vectorstore.documents
 
     # ── Generation ───────────────────────────────────────────────────
 
@@ -631,15 +637,16 @@ class StudyAssistant:
                 [],
             )
 
-        # Retrieve — get top relevant chunks (fast path for summarize too)
+        # Special handling for summarize: USE ALL DOCUMENTS, not just top chunks
+        if mode == "summarize":
+            return self._generate_comprehensive_summary(query)
+
+        # For other modes: retrieve relevant chunks
         if mode == "mcq":
             k = min(8, self.total_chunks or 8)
             docs = self.retrieve(query, k=k)
-        elif mode == "summarize":
-            # For summarize: get all unique sources (comprehensive but not slow)
-            k = min(12, self.total_chunks or 12)
-            docs = self.retrieve(query, k=k)
         else:
+            # Q&A and ELI5: get top relevant chunks
             docs = self.retrieve(query)
 
         if not docs:
@@ -648,28 +655,18 @@ class StudyAssistant:
                 [],
             )
 
-        # Build context string with truncation to prevent 413 Payload Too Large errors
+        # Build context string - NO TRUNCATION for content, let LLM see everything
         context_parts = []
-        context_size = 0
         
         for i, doc in enumerate(docs, 1):
             source = doc.metadata.get("source", "Unknown")
             page = doc.metadata.get("page", "?")
             
-            # Truncate chunk content to prevent payload bloat
-            truncated_content = doc.page_content[:config.MAX_CHUNK_DISPLAY]
-            if len(doc.page_content) > config.MAX_CHUNK_DISPLAY:
-                truncated_content += "…"
+            # FULL content for non-summarize modes (still respect payload limit)
+            content = doc.page_content
             
-            chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{truncated_content}"
-            chunk_size = len(chunk_text)
-            
-            # Stop adding chunks if we exceed max context size
-            if context_size + chunk_size > config.MAX_CONTEXT_CHARS:
-                break
-            
+            chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{content}"
             context_parts.append(chunk_text)
-            context_size += chunk_size
 
         if not context_parts:
             return (
@@ -691,6 +688,96 @@ class StudyAssistant:
             num_ctx=config.LLM_NUM_CTX,
         )
         return response, docs
+
+    # ── Comprehensive Summary (includes ALL documents) ────────────────
+    def _generate_comprehensive_summary(self, query: str) -> Tuple[str, List[Document]]:
+        """
+        Generate summary from ALL documents with full content (not just top chunks).
+        Processes in batches to avoid 413 payload errors.
+        
+        Returns complete information from all pages.
+        """
+        all_docs = self.retrieve_all()
+        if not all_docs:
+            return ("The answer is not available in the provided material.", [])
+
+        # Process all documents in batches to avoid 413 errors
+        BATCH_SIZE = 30  # ~30 chunks × ~1000 chars = ~30KB per batch (safe)
+        batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, len(all_docs), BATCH_SIZE)]
+        
+        all_summaries = []
+        
+        for batch_idx, batch in enumerate(batches, 1):
+            # Build context with FULL content (no truncation)
+            context_parts = []
+            for j, doc in enumerate(batch, 1):
+                source = doc.metadata.get("source", "Unknown")
+                page = doc.metadata.get("page", "?")
+                # FULL content - no truncation
+                chunk_text = f"[Chunk {j} | {source}, Page {page}]\n{doc.page_content}"
+                context_parts.append(chunk_text)
+            
+            context = "\n\n---\n\n".join(context_parts)
+            
+            # Create batch-specific prompt
+            prompt_template = PROMPT_MAP.get("summarize", PROMPT_MAP["qa"])
+            prompt = prompt_template.format(context=context, question=query)
+            
+            try:
+                summary = self.llm.generate(
+                    prompt=prompt,
+                    model=config.LLM_MODEL,
+                    temperature=0.3,
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+                all_summaries.append(summary)
+            except Exception as e:
+                all_summaries.append(f"[Batch {batch_idx} processing error: {str(e)[:100]}]")
+        
+        # Merge all batch summaries into one comprehensive summary
+        if len(all_summaries) == 1:
+            final_summary = all_summaries[0]
+        else:
+            # Combine multiple batch summaries into comprehensive final summary
+            merged_content = "\n\n---\n\n".join(all_summaries)
+            merge_prompt = f"""You have received multiple summary sections from different batches of course material.
+Your task is to merge them into ONE comprehensive, exam-ready summary that includes ALL information.
+
+IMPORTANT RULES:
+1. Do NOT drop any technical terms, concepts, methods, or formulas
+2. Do NOT skip any information from any batch
+3. Combine all Key Concepts, Techniques, and Details sections
+4. Maintain the hierarchical structure (## Summary, ## Main Concepts, etc.)
+5. Include EVERYTHING mentioned across all batches
+
+BATCH SUMMARIES TO MERGE:
+{merged_content}
+
+Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from every batch above:
+
+## Summary
+[Comprehensive overview covering all batches]
+
+## Main Concepts
+[EVERY concept from every batch - do not skip any]
+
+## Key Techniques & Methods
+[EVERY technique from every batch]
+
+## Important Details for the Exam
+[ALL formulas, examples, edge cases from every batch]
+"""
+            try:
+                final_summary = self.llm.generate(
+                    prompt=merge_prompt,
+                    model=config.LLM_MODEL,
+                    temperature=0.2,
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+            except Exception as e:
+                final_summary = f"Error merging summaries: {str(e)}\n\nPartial content:\n{merged_content[:5000]}"
+        
+        return final_summary, all_docs
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
     def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:

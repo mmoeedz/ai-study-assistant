@@ -1302,47 +1302,59 @@ if prompt := st.chat_input(
 
     # Generate response
     with st.chat_message("assistant", avatar="📜"):
-        with st.spinner("Consulting the manuscripts…"):
-            answer, source_docs = assistant.generate(prompt, mode=mode)
+        try:
+            with st.spinner("Consulting the manuscripts…"):
+                answer, source_docs = assistant.generate(prompt, mode=mode)
 
-        # Display formatted answer
-        st.markdown(f'<div class="response-card">{answer}</div>', unsafe_allow_html=True)
+            # Display formatted answer
+            st.markdown(f'<div class="response-card">{answer}</div>', unsafe_allow_html=True)
 
-        # Source references
-        source_labels = []
-        source_texts = []
-        if source_docs:
-            for doc in source_docs:
-                src = doc.metadata.get("source", "Unknown")
-                page = doc.metadata.get("page", "?")
-                source_labels.append(f"{src} (p.{page})")
-                source_texts.append(doc.page_content)
+            # Source references
+            source_labels = []
+            source_texts = []
+            if source_docs:
+                for doc in source_docs:
+                    src = doc.metadata.get("source", "Unknown")
+                    page = doc.metadata.get("page", "?")
+                    source_labels.append(f"{src} (p.{page})")
+                    source_texts.append(doc.page_content)
 
-            sources_html = " ".join(
-                f'<span class="source-chip">📄 {s}</span>' for s in source_labels
-            )
-            with st.expander("📖 View Sources"):
-                st.markdown(sources_html, unsafe_allow_html=True)
-                for i, doc in enumerate(source_docs, 1):
-                    st.markdown(f"**Chunk {i}:**")
-                    st.caption(
-                        doc.page_content[:500]
-                        + ("…" if len(doc.page_content) > 500 else "")
-                    )
+                sources_html = " ".join(
+                    f'<span class="source-chip">📄 {s}</span>' for s in source_labels
+                )
+                with st.expander("📖 View Sources"):
+                    st.markdown(sources_html, unsafe_allow_html=True)
+                    for i, doc in enumerate(source_docs, 1):
+                        st.markdown(f"**Chunk {i}:**")
+                        st.caption(
+                            doc.page_content[:500]
+                            + ("…" if len(doc.page_content) > 500 else "")
+                        )
 
-    # Save to history (current chat thread + persist to disk)
-    st.session_state.current_chat["messages"].append({
-        "query": prompt,
-        "mode": mode,
-        "answer": answer,
-        "sources": source_labels if source_docs else [],
-        "source_texts": source_texts if source_docs else [],
-    })
-    # Auto-set chat title from the first message of the thread
-    if (
-        st.session_state.current_chat.get("title") in (None, "", "New chat")
-        and st.session_state.current_chat["messages"]
-    ):
-        st.session_state.current_chat["title"] = _short_title(prompt)
-    # Persist to disk so the chat survives reloads / Streamlit Cloud restarts
-    save_chat(st.session_state.current_chat)
+            # Save to history (current chat thread + persist to disk)
+            st.session_state.current_chat["messages"].append({
+                "query": prompt,
+                "mode": mode,
+                "answer": answer,
+                "sources": source_labels if source_docs else [],
+                "source_texts": source_texts if source_docs else [],
+            })
+            # Auto-set chat title from the first message of the thread
+            if (
+                st.session_state.current_chat.get("title") in (None, "", "New chat")
+                and st.session_state.current_chat["messages"]
+            ):
+                st.session_state.current_chat["title"] = _short_title(prompt)
+            # Persist to disk so the chat survives reloads / Streamlit Cloud restarts
+            save_chat(st.session_state.current_chat)
+        
+        except RuntimeError as e:
+            # Catch our custom error messages (API key, network, etc.)
+            st.error(f"⚠️ {str(e)}")
+        except KeyError:
+            # Catch malformed API response
+            st.error("❌ Unexpected response format from LLM. Please try again.")
+        except Exception as e:
+            # Catch any other unexpected errors
+            st.error(f"❌ An error occurred: {type(e).__name__}: {str(e)[:200]}")
+

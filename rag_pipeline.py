@@ -334,13 +334,37 @@ class GroqClient:
                     continue
                 try:
                     resp.raise_for_status()
-                    return resp.json()["choices"][0]["message"]["content"]
+                    data = resp.json()
+                    # Safely extract response with better error handling
+                    if "choices" not in data or not data["choices"]:
+                        raise ValueError("Empty response from API - no choices returned")
+                    if "message" not in data["choices"][0]:
+                        raise ValueError("Unexpected API response structure")
+                    return data["choices"][0]["message"]["content"]
+                except (ValueError, KeyError) as e:
+                    raise RuntimeError(f"Failed to parse LLM response: {e}")
                 except requests.exceptions.HTTPError as e:
+                    # Handle specific error codes
+                    if resp.status_code == 401:
+                        raise RuntimeError(
+                            "🔑 Invalid or expired Groq API key. "
+                            "Please check your GROQ_API_KEY in .streamlit/secrets.toml"
+                        )
+                    elif resp.status_code == 403:
+                        raise RuntimeError(
+                            "🚫 Access denied. Your Groq API key may not have permission for this model."
+                        )
+                    elif resp.status_code == 400:
+                        raise RuntimeError(
+                            "⚠️ Bad request to Groq API. Check your prompt or model name."
+                        )
+                    elif 500 <= resp.status_code < 600:
+                        # 5xx errors → retry once or twice with backoff
+                        last_exc = e
+                        if attempt < 2:
+                            _t.sleep(2 ** attempt)
+                            continue
                     last_exc = e
-                    # 5xx errors → retry once or twice with backoff
-                    if 500 <= resp.status_code < 600 and attempt < 2:
-                        _t.sleep(2 ** attempt)
-                        continue
                     raise
             except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
                 # Network errors - retry with backoff
@@ -348,7 +372,14 @@ class GroqClient:
                 if attempt < 3:
                     _t.sleep(2 ** attempt)
                     continue
-                raise
+                raise RuntimeError(f"Network error connecting to Groq API: {e}")
+            except requests.exceptions.RequestException as e:
+                # Catch other request errors
+                last_exc = e
+                if attempt < 2:
+                    _t.sleep(2 ** attempt)
+                    continue
+                raise RuntimeError(f"Request error: {e}")
         # If we exhausted retries on 429s, raise the last one
         if last_exc:
             raise last_exc

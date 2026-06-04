@@ -31,18 +31,21 @@ Context:
 Question:
 {{question}}
 
-Provide your response in EXACTLY this structure (use the emoji headings):
+Provide your response in a clear, structured format:
 
-### ✅ Answer:
-[Clear, detailed explanation answering the question]
+## Answer
 
-### 📌 Key Points:
+[Provide a detailed, clear explanation answering the question directly]
+
+## Key Points
+
 • Point 1
 • Point 2
 • Point 3
 
-### 📖 Source Insight:
-[Brief reference to which part of the material was used]
+## Reference
+
+Brief note about which part of the material was used.
 """.strip()
 
 
@@ -67,30 +70,37 @@ Request:
 
 Provide a thorough, EXAM-READY summary in EXACTLY this structure:
 
-### 📝 Summary:
-[A 3–5 sentence overview naming the main topic and listing the high-level
-areas covered.]
+## Summary
 
-### 🎯 Main Themes:
-• Theme 1
-• Theme 2
-• Theme 3
-• …(add more themes if the context contains more)
+A 3–5 sentence overview naming the main topic and listing the high-level areas covered.
 
-### 📌 Key Concepts (one bullet for EVERY concept named in the context):
-• **Concept 1** — short definition
-• **Concept 2** — short definition
-• **Concept 3** — short definition
-• …(continue for every concept; do not stop at 3 if there are more)
+## Main Concepts
 
-### 🔧 Techniques / Methods Mentioned:
-• **Method 1** — what it does and when to use it
-• **Method 2** — what it does and when to use it
-• …(every named technique in the context)
+• **Concept 1** — Definition/explanation
+• **Concept 2** — Definition/explanation
+• **Concept 3** — Definition/explanation
+• (continue for every concept in context)
 
-### 💡 Important Details for the Exam:
-[Critical formulas, edge-cases, definitions, or worked examples worth
-memorising.]
+## Key Techniques & Methods
+
+• **Method 1** — What it does and when to use it
+• **Method 2** — What it does and when to use it
+• (continue for every technique)
+
+## Important Details for the Exam
+
+**Formulas & Calculations:**
+- Formula 1 and what it's used for
+- Formula 2 and what it's used for
+
+**Key Examples:**
+- Example 1 with brief explanation
+- Example 2 with brief explanation
+
+**Edge Cases & Important Notes:**
+- Critical point 1
+- Critical point 2
+- Critical point 3
 """.strip()
 
 
@@ -107,9 +117,9 @@ Topic/Request:
 Generate 5 multiple-choice questions based ONLY on the provided context.
 Each question must have exactly 4 options (A, B, C, D) with only one correct answer.
 
-Use this EXACT format:
+Use this format:
 
-### 📝 Multiple Choice Questions
+## Multiple Choice Questions
 
 **Q1.** [Question text]
 - A) [Option]
@@ -141,14 +151,13 @@ Use this EXACT format:
 - C) [Option]
 - D) [Option]
 
----
+## Answer Key
 
-### ✅ Answer Key:
-1. [Letter] — [Brief explanation]
-2. [Letter] — [Brief explanation]
-3. [Letter] — [Brief explanation]
-4. [Letter] — [Brief explanation]
-5. [Letter] — [Brief explanation]
+1. **[Letter]** — [Brief explanation]
+2. **[Letter]** — [Brief explanation]
+3. **[Letter]** — [Brief explanation]
+4. **[Letter]** — [Brief explanation]
+5. **[Letter]** — [Brief explanation]
 """.strip()
 
 
@@ -168,15 +177,18 @@ and relatable examples.
 
 Use this structure:
 
-### 🧒 Simple Explanation:
+## Simple Explanation
+
 [Explain in very simple language, using analogies and everyday examples]
 
-### 🔑 Remember These:
+## Key Points to Remember
+
 • Key takeaway 1 (in simple words)
 • Key takeaway 2 (in simple words)
 • Key takeaway 3 (in simple words)
 
-### 💡 Real-World Analogy:
+## Real-World Analogy
+
 [A relatable analogy to help the concept stick]
 """.strip()
 

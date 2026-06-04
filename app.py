@@ -246,19 +246,16 @@ div[data-testid="stRadio"] > div > label:has(input:checked)::after {
     border-radius: 2px;
 }
 
-/* ── Response card — parchment page ─────────────────────── */
+/* ── Response card — clean modern design like Claude ─────────────────────── */
 .response-card {
-    background:
-      linear-gradient(180deg, rgba(245, 236, 215, 0.97), rgba(236, 226, 200, 0.97));
-    color: #2b2418;
-    border: 1px solid rgba(212, 168, 75, 0.55);
-    border-radius: 6px;
-    padding: 1.8rem 2rem;
-    margin: 1rem 0;
+    background: linear-gradient(135deg, #f8f9fa 0%, #ffffff 100%);
+    color: #1a1a1a;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 2rem 2.5rem;
+    margin: 1.5rem 0;
     animation: fadeSlideIn 0.55s cubic-bezier(.2,.8,.2,1);
-    box-shadow:
-      0 14px 40px rgba(0, 0, 0, 0.45),
-      0 1px 0 rgba(255, 255, 255, 0.4) inset;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.07), 0 1px 3px rgba(0, 0, 0, 0.06);
     position: relative;
     overflow: hidden;
 }
@@ -266,54 +263,104 @@ div[data-testid="stRadio"] > div > label:has(input:checked)::after {
 .response-card::before {
     content: "";
     position: absolute;
-    inset: 6px;
-    border: 1px solid rgba(155, 117, 50, 0.25);
-    border-radius: 3px;
+    inset: 0;
+    background: linear-gradient(135deg, transparent, rgba(212, 168, 75, 0.02));
     pointer-events: none;
+    border-radius: 12px;
 }
 
 .response-card::after {
     content: "";
     position: absolute;
     left: 0; top: 0; bottom: 0;
-    width: 4px;
-    background: linear-gradient(180deg, var(--gold-500), var(--gold-300), var(--gold-500));
-    opacity: 0.8;
+    width: 3px;
+    background: linear-gradient(180deg, #d4a84b, #b8860b, #d4a84b);
+    opacity: 0.6;
 }
 
-.response-card h1, .response-card h2, .response-card h3,
-.response-card h4 {
-    color: #2b2418 !important;
-    font-family: 'Cormorant Garamond', serif !important;
-    font-weight: 600 !important;
-    margin-top: 0.8rem;
+.response-card h1 {
+    font-size: 1.875rem !important;
+    font-weight: 700 !important;
+    margin-top: 1.5rem !important;
+    margin-bottom: 0.75rem !important;
+    color: #1a1a1a !important;
+    letter-spacing: -0.5px;
+}
+
+.response-card h2 {
+    font-size: 1.5rem !important;
+    font-weight: 700 !important;
+    margin-top: 1.25rem !important;
+    margin-bottom: 0.75rem !important;
+    color: #2d3748 !important;
+    padding-bottom: 0.5rem !important;
+    border-bottom: 2px solid #e5e7eb !important;
 }
 
 .response-card h3 {
-    border-bottom: 1px solid rgba(155, 117, 50, 0.25);
-    padding-bottom: 0.3rem;
-    font-size: 1.25rem;
+    font-size: 1.125rem !important;
+    font-weight: 600 !important;
+    margin-top: 1rem !important;
+    margin-bottom: 0.5rem !important;
+    color: #374151 !important;
 }
 
-.response-card p, .response-card li {
-    font-family: 'Inter', sans-serif !important;
-    color: #3a311e !important;
-    line-height: 1.65;
+.response-card h4 {
+    font-size: 1rem !important;
+    font-weight: 600 !important;
+    margin-top: 0.75rem !important;
+    margin-bottom: 0.5rem !important;
+    color: #4b5563 !important;
+}
+
+.response-card p {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    color: #374151 !important;
+    line-height: 1.75 !important;
+    margin-bottom: 1rem !important;
+    font-size: 1rem !important;
+}
+
+.response-card li {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+    color: #374151 !important;
+    line-height: 1.75 !important;
+    margin-bottom: 0.5rem !important;
+    font-size: 1rem !important;
+}
+
+.response-card ul, .response-card ol {
+    margin-left: 1.5rem !important;
+    margin-bottom: 1rem !important;
 }
 
 .response-card strong {
-    color: #1c1810 !important;
+    color: #1f2937 !important;
+    font-weight: 700;
 }
 
 .response-card code {
-    background: rgba(155, 117, 50, 0.12) !important;
-    color: #5b3c12 !important;
-    border-radius: 3px;
-    padding: 1px 6px;
+    background: #f3f4f6 !important;
+    color: #5b21b6 !important;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+    font-size: 0.9em !important;
+    border: 1px solid #e5e7eb;
 }
 
 .response-card hr {
-    border-color: rgba(155, 117, 50, 0.25) !important;
+    border-color: #e5e7eb !important;
+    margin: 1.5rem 0 !important;
+}
+
+.response-card blockquote {
+    border-left: 4px solid #d4a84b;
+    padding-left: 1rem;
+    margin-left: 0;
+    margin-right: 0;
+    color: #4b5563;
+    font-style: italic;
 }
 
 @keyframes fadeSlideIn {

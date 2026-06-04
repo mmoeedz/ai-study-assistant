@@ -57,6 +57,7 @@ LLM_NUM_CTX = 4096             # Context window
 # ── Payload Size Limits (prevent 413 errors on Groq) ──────────────────
 MAX_CONTEXT_CHARS = 12000      # Max context size in prompt (chars)
 MAX_CHUNK_DISPLAY = 400        # Truncate each chunk to this (chars)
+MAX_SUMMARIZE_BATCHES = 20     # Max batches to process in summarize (safety limit)
 
 # ── Embedding Settings ───────────────────────────────────────────────
 EMBEDDING_MODEL = (

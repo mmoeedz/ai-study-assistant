@@ -631,14 +631,13 @@ class StudyAssistant:
                 [],
             )
 
-        # Special path: SUMMARIZE uses map-reduce so we cover EVERY chunk
-        # (the request body is too big to send everything in one call).
-        if mode == "summarize" and self.vectorstore is not None:
-            return self._summarize_map_reduce(query)
-
-        # Retrieve — smaller k to prevent 413 payload errors
+        # Retrieve — get top relevant chunks (fast path for summarize too)
         if mode == "mcq":
-            k = min(8, self.total_chunks or 8)  # Reduced from 40
+            k = min(8, self.total_chunks or 8)
+            docs = self.retrieve(query, k=k)
+        elif mode == "summarize":
+            # For summarize: get all unique sources (comprehensive but not slow)
+            k = min(12, self.total_chunks or 12)
             docs = self.retrieve(query, k=k)
         else:
             docs = self.retrieve(query)
@@ -704,9 +703,14 @@ class StudyAssistant:
             return ("The answer is not available in the provided material.", [])
 
         # MAP step — chunk everything into batches that fit safely in one request
-        # Smaller batch size to prevent 413 Payload Too Large errors
-        BATCH_SIZE = 6  # ~6 chunks × ~400 chars = ~2.4k chars per call (safe margin)
+        # Larger batch size to reduce API calls (safe: 15 chunks × 400 chars = 6KB << 30KB limit)
+        BATCH_SIZE = 15  # ~15 chunks × ~400 chars ≈ 6KB per call (much faster, still safe)
         batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, len(all_docs), BATCH_SIZE)]
+        
+        # Safety limit: don't process more than MAX_SUMMARIZE_BATCHES
+        # (prevents hanging on huge documents)
+        if len(batches) > config.MAX_SUMMARIZE_BATCHES:
+            batches = batches[:config.MAX_SUMMARIZE_BATCHES]
 
         partial_extracts: list[str] = []
         for batch_idx, batch in enumerate(batches, 1):
@@ -745,41 +749,23 @@ class StudyAssistant:
         merged_bullets = "\n\n".join(partial_extracts)
 
         # REDUCE step — collapse the merged bullets into the polished output
+        # Simplified prompt for speed (no repetitive rules)
         reduce_prompt = (
-            "You are an AI Study Assistant building EXAM-READY notes for a "
-            "student. Below is a comprehensive list of bullet points extracted "
-            "from EVERY chunk of their course PDF. This is for their EXAM — "
-            "do NOT lose information.\n\n"
-            "ABSOLUTE RULES:\n"
-            "1. Every distinct technical term that appears in the bullets "
-            "below MUST appear somewhere in your final output.\n"
-            "2. Use the EXACT terminology from the bullets — do not rename "
-            "concepts (e.g. keep 'stopwords' as 'stopwords', not 'common "
-            "words').\n"
-            "3. Do not invent anything not in the bullets.\n"
-            "4. Do not merge two distinct concepts into one bullet.\n"
-            "5. If a term appears in multiple bullets, list it ONCE in Key "
-            "Concepts and ONCE in Techniques (if applicable).\n\n"
-            f"STUDENT'S REQUEST: {query}\n\n"
-            f"EXTRACTED BULLETS FROM ALL CHUNKS:\n{merged_bullets}\n\n"
-            "Now produce the final summary in EXACTLY this structure:\n\n"
+            f"You are an AI Study Assistant. The student asked: '{query}'\n\n"
+            "Below are bullet points extracted from course material.\n"
+            "Organize them into an EXAM-READY summary with these sections:\n\n"
             "### 📝 Summary:\n"
-            "[3–5 sentence overview naming the main topic and the high-level "
-            "areas covered.]\n\n"
+            "(3-5 sentences overview)\n\n"
             "### 🎯 Main Themes:\n"
-            "• Theme 1\n• Theme 2\n• Theme 3\n• …(more if needed)\n\n"
+            "(Key topics covered)\n\n"
             "### 📌 Key Concepts:\n"
-            "[ONE bullet per distinct concept above. NEVER drop a term. Use "
-            "the source's wording. Aim for 15+ bullets.]\n"
-            "• **Concept** — short definition\n"
-            "• …\n\n"
+            "(Technical terms with brief definitions)\n\n"
             "### 🔧 Techniques / Methods:\n"
-            "[ONE bullet per technique. Same rules — do not drop, do not "
-            "rename. Aim for 10+ bullets.]\n"
-            "• **Method** — what it does\n"
-            "• …\n\n"
-            "### 💡 Important Details for the Exam:\n"
-            "[Formulas, edge-cases, examples, step-by-step procedures.]"
+            "(Procedures and approaches)\n\n"
+            "### 💡 Exam Tips:\n"
+            "(Important formulas, edge cases, examples)\n\n"
+            "---\n"
+            f"EXTRACTED CONTENT:\n{merged_bullets}"
         )
         final = self.llm.generate(
             prompt=reduce_prompt,

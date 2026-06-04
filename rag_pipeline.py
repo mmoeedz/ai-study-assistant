@@ -27,6 +27,47 @@ import config
 from prompts import PROMPT_MAP
 
 
+def _format_llm_request_error(exc: Exception) -> str:
+    """Return a user-safe error message for provider/API failures."""
+    if isinstance(exc, requests.exceptions.HTTPError):
+        response = exc.response
+        status = response.status_code if response is not None else "unknown"
+        detail = ""
+        if response is not None:
+            try:
+                payload = response.json()
+                if isinstance(payload, dict):
+                    err = payload.get("error", payload)
+                    if isinstance(err, dict):
+                        detail = str(
+                            err.get("message")
+                            or err.get("code")
+                            or err
+                        )
+                    else:
+                        detail = str(err)
+            except Exception:
+                detail = response.text[:500]
+        detail = detail or str(exc)
+        return (
+            f"⚠️ LLM request failed (HTTP {status}).\n\n"
+            f"{detail}\n\n"
+            "Please check your Groq API key, model name, rate limits, and "
+            "project permissions."
+        )
+
+    if isinstance(exc, requests.exceptions.Timeout):
+        return "⚠️ The LLM request timed out. Please try again in a moment."
+
+    if isinstance(exc, requests.exceptions.RequestException):
+        return (
+            "⚠️ Could not reach the LLM provider. Please check your internet "
+            "connection and provider settings."
+        )
+
+    return f"⚠️ Something went wrong while generating the answer: {exc}"
+
+
 # ── Data classes ──────────────────────────────────────────────────────
 
 @dataclass
@@ -314,16 +355,24 @@ class GroqClient:
                     f"429 Too Many Requests (attempt {attempt + 1})", response=resp
                 )
                 continue
-            try:
-                resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
-            except requests.exceptions.HTTPError as e:
-                last_exc = e
+            if resp.status_code >= 400:
                 # 5xx errors → retry once or twice with backoff
                 if 500 <= resp.status_code < 600 and attempt < 2:
+                    last_exc = requests.exceptions.HTTPError(
+                        f"{resp.status_code}: {resp.text[:500]}", response=resp
+                    )
                     _t.sleep(2 ** attempt)
                     continue
-                raise
+                # Surface the actual API error message for easier debugging
+                try:
+                    detail = resp.json()
+                except Exception:
+                    detail = resp.text[:500]
+                raise requests.exceptions.HTTPError(
+                    f"Groq API error {resp.status_code}: {detail}",
+                    response=resp,
+                )
+            return resp.json()["choices"][0]["message"]["content"]
         # If we exhausted retries on 429s, raise the last one
         if last_exc:
             raise last_exc
@@ -603,12 +652,15 @@ class StudyAssistant:
         prompt = prompt_template.format(context=context, question=query)
 
         # Call LLM (provider-agnostic)
-        response = self.llm.generate(
-            prompt=prompt,
-            model=config.LLM_MODEL,
-            temperature=config.LLM_TEMPERATURE,
-            num_ctx=config.LLM_NUM_CTX,
-        )
+        try:
+            response = self.llm.generate(
+                prompt=prompt,
+                model=config.LLM_MODEL,
+                temperature=config.LLM_TEMPERATURE,
+                num_ctx=config.LLM_NUM_CTX,
+            )
+        except Exception as exc:
+            return _format_llm_request_error(exc), docs
         return response, docs
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
@@ -692,10 +744,13 @@ class StudyAssistant:
             "### 💡 Important Details for the Exam:\n"
             "[Formulas, edge-cases, examples, step-by-step procedures.]"
         )
-        final = self.llm.generate(
-            prompt=reduce_prompt,
-            model=config.LLM_MODEL,
-            temperature=0.2,
-            num_ctx=config.LLM_NUM_CTX,
-        )
+        try:
+            final = self.llm.generate(
+                prompt=reduce_prompt,
+                model=config.LLM_MODEL,
+                temperature=0.2,
+                num_ctx=config.LLM_NUM_CTX,
+            )
+        except Exception as exc:
+            return _format_llm_request_error(exc), all_docs
         return final, all_docs

@@ -719,11 +719,23 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             (answer_text, source_documents)
         """
         if self.vectorstore is None:
-            return (
-                "⚠️ No documents have been indexed yet. "
-                "Please upload and process PDFs first.",
-                [],
-            )
+            if mode == "coding":
+                context = "No study material uploaded."
+                prompt_template = PROMPT_MAP.get(mode, PROMPT_MAP["qa"])
+                prompt = prompt_template.format(context=context, question=query)
+                response = self.llm.generate(
+                    prompt=prompt,
+                    model=config.LLM_MODEL,
+                    temperature=config.LLM_TEMPERATURE,
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+                return response, []
+            else:
+                return (
+                    "⚠️ No documents have been indexed yet. "
+                    "Please upload and process documents first.",
+                    [],
+                )
 
         # Special handling for summarize: USE ALL DOCUMENTS, not just top chunks
         if mode == "summarize":
@@ -738,10 +750,10 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             k = min(15, self.total_chunks or 15)
             docs = self.retrieve(query, k=k)
         else:
-            # Q&A and ELI5: get top relevant chunks
+            # Q&A and Coding: get top relevant chunks
             docs = self.retrieve(query)
 
-        if not docs:
+        if not docs and mode != "coding":
             return (
                 "The answer is not available in the provided material.",
                 [],
@@ -760,13 +772,10 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{content}"
             context_parts.append(chunk_text)
 
-        if not context_parts:
-            return (
-                "The answer is not available in the provided material.",
-                [],
-            )
-
-        context = "\n\n---\n\n".join(context_parts)
+        if not context_parts and mode == "coding":
+            context = "No relevant study material found."
+        else:
+            context = "\n\n---\n\n".join(context_parts)
 
         # Select prompt template
         prompt_template = PROMPT_MAP.get(mode, PROMPT_MAP["qa"])

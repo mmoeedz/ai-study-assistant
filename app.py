@@ -1174,95 +1174,145 @@ st.markdown("""
 
 # Mode selector
 MODE_OPTIONS = {
-    "📄  Document Q&A": "qa",
-    "📝  Detailed Summary": "summarize",
-    "💻  Coding & Debugging": "coding",
-    "🏆  Interactive Quiz": "quiz",
+    "�  Read": "read",
+    "💻  Code": "code",
 }
 
 selected_mode_label = st.radio(
-    "Choose a mode",
+    "Choose a section",
     options=list(MODE_OPTIONS.keys()),
     horizontal=True,
     label_visibility="collapsed",
     key="mode_selector",
 )
-mode = MODE_OPTIONS[selected_mode_label]
+section = MODE_OPTIONS[selected_mode_label]
 
-# ── Landing-page upload card (single primary upload entry point) ─────
-st.markdown(
-    """
-    <div class="upload-card-header">
-        <div class="upload-icon">📚</div>
-        <div class="upload-text">
-            <div class="upload-title">Upload your study material</div>
-            <div class="upload-sub">PDF, Word & Text files supported · multiple supported · processed locally</div>
+# Initialize image_base64
+image_base64 = None
+
+if section == "read":
+    # Under Read, we support sub-modes
+    SUB_MODE_OPTIONS = {
+        "📄  Document Q&A": "qa",
+        "📝  Detailed Summary": "summarize",
+        "🏆  Interactive Quiz": "quiz",
+    }
+    selected_sub_mode = st.radio(
+        "Choose activity",
+        options=list(SUB_MODE_OPTIONS.keys()),
+        horizontal=True,
+        label_visibility="collapsed",
+        key="sub_mode_selector",
+    )
+    mode = SUB_MODE_OPTIONS[selected_sub_mode]
+    
+    # Show the files upload section
+    # ── Landing-page upload card (single primary upload entry point) ─────
+    st.markdown(
+        """
+        <div class="upload-card-header">
+            <div class="upload-icon">📚</div>
+            <div class="upload-text">
+                <div class="upload-title">Upload your study material</div>
+                <div class="upload-sub">PDF, Word & Text files supported · multiple supported · processed locally</div>
+            </div>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-main_files = st.file_uploader(
-    "Drop documents here",
-    type=["pdf", "docx", "txt", "md"],
-    accept_multiple_files=True,
-    key="main_uploader",
-    label_visibility="collapsed",
-)
-
-ucol1, ucol2 = st.columns([3, 2])
-with ucol1:
-    if main_files:
-        st.caption(f"📎 **{len(main_files)}** file(s) ready to process")
-    elif assistant.indexed_files:
-        st.caption(
-            f"📚 **{len(assistant.indexed_files)}** document(s) already indexed — "
-            f"upload more above or just start chatting below."
-        )
-    else:
-        st.caption("Drop files above to begin.")
-with ucol2:
-    main_process_clicked = st.button(
-        "🔄 Process Documents",
-        key="main_process_btn",
-        disabled=not main_files,
-        use_container_width=True,
+        """,
+        unsafe_allow_html=True,
     )
 
-if main_process_clicked and main_files:
-    with st.spinner("Processing…"):
-        mprogress = st.progress(0)
-        mstatus = st.empty()
+    main_files = st.file_uploader(
+        "Drop documents here",
+        type=["pdf", "docx", "txt", "md"],
+        accept_multiple_files=True,
+        key="main_uploader",
+        label_visibility="collapsed",
+    )
 
-        def _mcb(pct, msg):
-            mprogress.progress(pct)
-            mstatus.caption(msg)
-
-        num_docs, num_chunks = assistant.ingest_pdfs(
-            main_files, progress_callback=_mcb
+    ucol1, ucol2 = st.columns([3, 2])
+    with ucol1:
+        if main_files:
+            st.caption(f"📎 **{len(main_files)}** file(s) ready to process")
+        elif assistant.indexed_files:
+            st.caption(
+                f"📚 **{len(assistant.indexed_files)}** document(s) already indexed — "
+                f"upload more above or just start chatting below."
+            )
+        else:
+            st.caption("Drop files above to begin.")
+    with ucol2:
+        main_process_clicked = st.button(
+            "🔄 Process Documents",
+            key="main_process_btn",
+            disabled=not main_files,
+            use_container_width=True,
         )
-        mprogress.progress(1.0)
-        mstatus.caption("✅ Complete!")
+
+    if main_process_clicked and main_files:
+        with st.spinner("Processing…"):
+            mprogress = st.progress(0)
+            mstatus = st.empty()
+
+            def _mcb(pct, msg):
+                mprogress.progress(pct)
+                mstatus.caption(msg)
+
+            num_docs, num_chunks = assistant.ingest_pdfs(
+                main_files, progress_callback=_mcb
+            )
+            mprogress.progress(1.0)
+            mstatus.caption("✅ Complete!")
+        
+        # NEW: Automatically generate a short summary using the LLM (acting like a normal LLM)
+        with st.spinner("Analyzing document contents for a quick summary…"):
+            try:
+                auto_summary = assistant.generate_auto_summary()
+            except Exception as e:
+                auto_summary = f"I have successfully indexed {num_docs} document(s) with {num_chunks} chunks. You can now start asking questions, generating MCQs, or asking for a detailed summary!"
+                
+        # Append the short summary as the system welcoming/intro message in chat history
+        st.session_state.current_chat["messages"].append({
+            "query": f"📖 Upload: {', '.join([f.name for f in main_files])}",
+            "mode": "qa",
+            "answer": auto_summary,
+            "sources": [],
+            "source_texts": [],
+        })
+        save_chat(st.session_state.current_chat)
+        st.session_state.processed = True
+        st.rerun()
+
+else:
+    # Code mode
+    mode = "coding"
     
-    # NEW: Automatically generate a short summary using the LLM (acting like a normal LLM)
-    with st.spinner("Analyzing document contents for a quick summary…"):
-        try:
-            auto_summary = assistant.generate_auto_summary()
-        except Exception as e:
-            auto_summary = f"I have successfully indexed {num_docs} document(s) with {num_chunks} chunks. You can now start asking questions, generating MCQs, or asking for a detailed summary!"
-            
-    # Append the short summary as the system welcoming/intro message in chat history
-    st.session_state.current_chat["messages"].append({
-        "query": f"📖 Upload: {', '.join([f.name for f in main_files])}",
-        "mode": "qa",
-        "answer": auto_summary,
-        "sources": [],
-        "source_texts": [],
-    })
-    save_chat(st.session_state.current_chat)
-    st.session_state.processed = True
-    st.rerun()
+    # Upload images with plus sign
+    st.markdown(
+        """
+        <div class="upload-card-header">
+            <div class="upload-icon">🖼️</div>
+            <div class="upload-text">
+                <div class="upload-title">LLM Coding Mode — Images & Snapshot Upload</div>
+                <div class="upload-sub">Supports uploading code snapshots, architecture diagrams, or compiler screenshots</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
+    # Simulating a direct plus icon / upload button for LLM experience
+    uploaded_pic = st.file_uploader(
+        "➕",
+        type=["png", "jpg", "jpeg", "webp"],
+        key="code_image_uploader",
+    )
+    if uploaded_pic is not None:
+        import base64
+        # Show a compact image preview
+        st.image(uploaded_pic, width=280)
+        # Convert image to base64
+        pic_bytes = uploaded_pic.read()
+        image_base64 = base64.b64encode(pic_bytes).decode("utf-8")
 
 st.markdown("---")
 
@@ -1527,8 +1577,17 @@ if prompt := st.chat_input(
     # Generate response
     with st.chat_message("assistant", avatar="📜"):
         try:
+            # If in Code mode, pull image_base64 if available
+            img_to_pass = None
+            if section == "code" and "code_image_uploader" in st.session_state and st.session_state.code_image_uploader is not None:
+                import base64
+                # Rewind in case it was already read
+                st.session_state.code_image_uploader.seek(0)
+                pic_bytes = st.session_state.code_image_uploader.read()
+                img_to_pass = base64.b64encode(pic_bytes).decode("utf-8")
+
             with st.spinner("Consulting the manuscripts…"):
-                answer, source_docs = assistant.generate(prompt, mode=mode)
+                answer, source_docs = assistant.generate(prompt, mode=mode, image_base64=img_to_pass)
 
             # Display formatted answer with Read More expansion
             # Show ~80% initially, expand for full details

@@ -481,6 +481,94 @@ class StudyAssistant:
                 )
         return documents
 
+    @staticmethod
+    def extract_text_from_file(file_bytes: bytes, filename: str) -> List[Document]:
+        """Extract text from a file (PDF, DOCX, TXT, MD, etc.) and return a list of Documents.
+        All text is forced to plain str."""
+        ext = filename.split(".")[-1].lower() if "." in filename else ""
+        documents = []
+
+        if ext == "pdf":
+            return StudyAssistant.extract_text_from_pdf(file_bytes, filename)
+        
+        elif ext == "docx":
+            try:
+                import zipfile
+                import xml.etree.ElementTree as ET
+                with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+                    xml_content = z.read('word/document.xml')
+                    root = ET.fromstring(xml_content)
+                    paragraphs = []
+                    for para in root.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p'):
+                        texts = [node.text for node in para.iter('{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t') if node.text]
+                        if texts:
+                            paragraphs.append("".join(texts))
+                    
+                    full_text = "\n\n".join(paragraphs)
+                    if full_text.strip():
+                        documents.append(
+                            Document(
+                                page_content=full_text,
+                                metadata={
+                                    "source": str(filename),
+                                    "page": 1,
+                                },
+                            )
+                        )
+            except Exception:
+                pass
+                
+        else:
+            try:
+                raw = file_bytes.decode("utf-8", errors="replace")
+                if raw.strip():
+                    documents.append(
+                        Document(
+                            page_content=raw,
+                            metadata={
+                                "source": str(filename),
+                                "page": 1,
+                            },
+                        )
+                    )
+            except Exception:
+                pass
+                
+        return documents
+
+    def generate_auto_summary(self) -> str:
+        """Generate an automatic short summary of the uploaded files to welcome the user."""
+        if not self.vectorstore or self.total_chunks == 0:
+            return "Welcome! No documents have been indexed yet."
+        
+        docs = self.retrieve("main topics, overview, table of contents, introduction", k=4)
+        if not docs:
+            docs = self.vectorstore.documents[:4]
+            
+        context_parts = []
+        for i, d in enumerate(docs, 1):
+            context_parts.append(f"[Document Chunk {i}]: {d.page_content[:1000]}")
+        context = "\n\n".join(context_parts)
+        
+        prompt = f"""You are an AI Study Assistant. The user has uploaded document(s) containing the following material:
+
+{context}
+
+Provide a concise, high-level short summary (4-6 sentences) of what these documents cover. 
+Act like a normal advanced LLM that has just read these documents. Be professional, direct, and welcoming. 
+Conclude with a brief note telling the user that they can now ask questions, generate MCQs, or request a detailed summary.
+"""
+        try:
+            summary = self.llm.generate(
+                prompt=prompt,
+                model=config.LLM_MODEL,
+                temperature=0.4,
+                num_ctx=config.LLM_NUM_CTX,
+            )
+            return summary
+        except Exception as e:
+            return f"Welcome! I have successfully processed and indexed your documents. You can now start asking questions!"
+
     # ── Chunking ──────────────────────────────────────────────────────
 
     @staticmethod
@@ -577,7 +665,7 @@ class StudyAssistant:
                 )
 
             # Extract pages
-            pages = self.extract_text_from_pdf(file_bytes, filename)
+            pages = self.extract_text_from_file(file_bytes, filename)
             total_pages += len(pages)
 
             # Chunk
@@ -644,6 +732,10 @@ class StudyAssistant:
         # For other modes: retrieve relevant chunks
         if mode == "mcq":
             k = min(8, self.total_chunks or 8)
+            docs = self.retrieve(query, k=k)
+        elif mode == "quiz":
+            # For quiz generation, retrieve up to 15 diverse chunks to have enough material for 10 distinct questions
+            k = min(15, self.total_chunks or 15)
             docs = self.retrieve(query, k=k)
         else:
             # Q&A and ELI5: get top relevant chunks

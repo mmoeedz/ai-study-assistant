@@ -1089,7 +1089,7 @@ with st.sidebar:
         """, unsafe_allow_html=True)
 
     if assistant.indexed_files:
-        st.markdown("### 📜 Indexed PDFs")
+        st.markdown("### 📜 Indexed Documents")
         items = "".join(
             f"<li>📖 {fname}</li>" for fname in assistant.indexed_files
         )
@@ -1105,9 +1105,8 @@ with st.sidebar:
         chat_md_lines = ["# AI Study Assistant — Chat Export\n"]
         for i, entry in enumerate(st.session_state.current_chat["messages"], 1):
             mode_label = {
-                "qa": "Inquire", "summarize": "Summarise",
-                "mcq": "Quiz Me", "eli5": "Explain Simply",
-            }.get(entry.get("mode", "qa"), "Inquire")
+                "qa": "Document Chat", "summarize": "Detailed Summary", "coding": "Coding & Debugging",
+            }.get(entry.get("mode", "qa"), "Document Chat")
             chat_md_lines.append(f"## Q{i} — {mode_label}\n")
             # Escape special markdown characters in the query
             query_escaped = entry.get("query", "").replace("\\", "\\\\").replace("`", "\\`")
@@ -1134,13 +1133,11 @@ with st.sidebar:
     with st.expander("💡 Study Tips", expanded=False):
         st.markdown(
             """
-            - **Inquire** for fact-finding and concept explanations
-            - **Summarise** before exams to revise quickly
-            - **Quiz Me** to test recall actively
-            - **Explain Simply** when something feels too dense
-            - Upload **multiple PDFs** to query across all of them
-            - Be **specific** — "explain backpropagation in 3 steps"
-              works better than "explain backprop"
+            - **Document Q&A** for factual questions, chat, or custom tasks
+            - Ask to **generate MCQs** or **generate questions (long/short)** inside Document Chat
+            - Choose **Detailed Summary** to get a complete, exam-ready notes file
+            - Use **Coding & Debugging** to generate code, detect bugs/mistakes, and teach code line-by-line or section-by-section (Supports **any** programming language like Python, C++, Java, JavaScript, Rust, etc.)
+            - Upload **PDFs, Word documents, or text files**
             """
         )
 
@@ -1150,8 +1147,9 @@ with st.sidebar:
             """
             **AI Study Assistant** uses Retrieval-Augmented
             Generation (RAG) to answer questions grounded in
-            YOUR uploaded PDFs — never invented.
+            YOUR uploaded files — never invented.
 
+            • Support: PDF, DOCX, TXT, MD<br/>
             • Cloud LLM: LLaMA-3.1-8B (via Groq)<br/>
             • Embeddings: BGE-small (in-process)<br/>
             • Vector store: NumPy cosine similarity<br/>
@@ -1207,10 +1205,10 @@ st.markdown("""
 
 # Mode selector
 MODE_OPTIONS = {
-    "❓  Inquire":      "qa",
-    "📝  Summarise":    "summarize",
-    "📋  Quiz Me":      "mcq",
-    "💡  Explain Simply": "eli5",
+    "📄  Document Q&A": "qa",
+    "📝  Detailed Summary": "summarize",
+    "💻  Coding & Debugging": "coding",
+    "🏆  Interactive Quiz": "quiz",
 }
 
 selected_mode_label = st.radio(
@@ -1229,7 +1227,7 @@ st.markdown(
         <div class="upload-icon">📚</div>
         <div class="upload-text">
             <div class="upload-title">Upload your study material</div>
-            <div class="upload-sub">PDF files only · multiple supported · processed locally</div>
+            <div class="upload-sub">PDF, Word & Text files supported · multiple supported · processed locally</div>
         </div>
     </div>
     """,
@@ -1237,8 +1235,8 @@ st.markdown(
 )
 
 main_files = st.file_uploader(
-    "Drop PDF files",
-    type=["pdf"],
+    "Drop documents here",
+    type=["pdf", "docx", "txt", "md"],
     accept_multiple_files=True,
     key="main_uploader",
     label_visibility="collapsed",
@@ -1254,7 +1252,7 @@ with ucol1:
             f"upload more above or just start chatting below."
         )
     else:
-        st.caption("Drop one or more PDFs to begin.")
+        st.caption("Drop files above to begin.")
 with ucol2:
     main_process_clicked = st.button(
         "🔄 Process Documents",
@@ -1277,7 +1275,23 @@ if main_process_clicked and main_files:
         )
         mprogress.progress(1.0)
         mstatus.caption("✅ Complete!")
-    st.success(f"Indexed **{num_docs}** document(s) → **{num_chunks}** chunks")
+    
+    # NEW: Automatically generate a short summary using the LLM (acting like a normal LLM)
+    with st.spinner("Analyzing document contents for a quick summary…"):
+        try:
+            auto_summary = assistant.generate_auto_summary()
+        except Exception as e:
+            auto_summary = f"I have successfully indexed {num_docs} document(s) with {num_chunks} chunks. You can now start asking questions, generating MCQs, or asking for a detailed summary!"
+            
+    # Append the short summary as the system welcoming/intro message in chat history
+    st.session_state.current_chat["messages"].append({
+        "query": f"📖 Upload: {', '.join([f.name for f in main_files])}",
+        "mode": "qa",
+        "answer": auto_summary,
+        "sources": [],
+        "source_texts": [],
+    })
+    save_chat(st.session_state.current_chat)
     st.session_state.processed = True
     st.rerun()
 
@@ -1291,29 +1305,29 @@ if not st.session_state.current_chat["messages"] and not assistant.indexed_files
         <div class="emblem">⚜</div>
         <h3>Welcome to your AI Study Assistant</h3>
         <div class="subtitle">"Lege, perlege, relege" — read, study, read again</div>
-        <p>Pick a mode above, upload your PDFs in the gold card, and start
+        <p>Choose a mode above, upload your files in the gold card, and start
         asking questions. The sidebar (<strong>☰</strong> at the top-left)
         holds your stats, recent questions, and chat export.</p>
         <div class="feature-grid">
             <div class="feature-item">
-                <div class="emoji">❓</div>
-                <div class="title">Inquire</div>
-                <div class="desc">Ask questions and receive cited answers</div>
+                <div class="emoji">📄</div>
+                <div class="title">Document Q&A</div>
+                <div class="desc">Chat with documents, ask normal questions, generate MCQs, or generate Q&As of custom lengths</div>
             </div>
             <div class="feature-item">
                 <div class="emoji">📝</div>
-                <div class="title">Summarise</div>
-                <div class="desc">Distil chapters into key themes</div>
+                <div class="title">Detailed Summary</div>
+                <div class="desc">Get an exhaustive exam-ready summary covering every topic without skipping anything</div>
             </div>
             <div class="feature-item">
-                <div class="emoji">📋</div>
-                <div class="title">Quiz Me</div>
-                <div class="desc">Generate examination-style questions</div>
+                <div class="emoji">💻</div>
+                <div class="title">Coding & Debugging</div>
+                <div class="desc">Generate clean code, debug syntax/logical mistakes, and explain code line-by-line or by function (Supports C++, Java, JavaScript, Rust, Python, etc.)</div>
             </div>
             <div class="feature-item">
-                <div class="emoji">💡</div>
-                <div class="title">Explain Simply</div>
-                <div class="desc">Plain-language beginner explanations</div>
+                <div class="emoji">🏆</div>
+                <div class="title">Interactive Quiz</div>
+                <div class="desc">Take a live, 10-question graded quiz with feedback, tracking, correct-answer highlights, and comprehensive grading!</div>
             </div>
         </div>
     </div>
@@ -1336,6 +1350,200 @@ for entry in st.session_state.current_chat["messages"]:
                 for i, doc_text in enumerate(entry.get("source_texts", []), 1):
                     st.markdown(f"**Chunk {i}:**")
                     st.caption(doc_text[:500] + ("…" if len(doc_text) > 500 else ""))
+
+
+# ── Render Quiz Mode UI elements if selected ──────────────────────────
+if mode == "quiz":
+    st.markdown("### 🏆 Live Interactive Quiz (10 Questions)")
+    
+    if not assistant.vectorstore:
+        st.warning("⚠️ Please upload and process study documents first to generate a quiz!")
+    else:
+        # Initialize quiz states in session_state
+        if "quiz_questions" not in st.session_state:
+            st.session_state.quiz_questions = None
+        if "quiz_user_answers" not in st.session_state:
+            st.session_state.quiz_user_answers = {}
+        if "quiz_submitted" not in st.session_state:
+            st.session_state.quiz_submitted = False
+        if "quiz_key" not in st.session_state:
+            st.session_state.quiz_key = 0  # To easily force reset widgets
+
+        if st.session_state.quiz_questions is None:
+            st.markdown(
+                """
+                <div style='background: rgba(212,168,75,0.06); padding: 1.5rem; border: 1px solid rgba(212,168,75,0.3); border-radius: 8px;'>
+                    <h4 style='color: #f1d490; margin-top: 0;'>Ready to test your knowledge?</h4>
+                    <p style='color: #cbd5e1; font-size: 0.95rem; line-height: 1.5;'>
+                        Our system will extract 15 diverse segments from your documents and prompt LLaMA to build a 
+                        custom-tailored, exhaustive 10-question multiple choice quiz with detailed grading explanations.
+                    </p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.write("")
+            if st.button("🎬 Generate 10-Question Live Quiz", key="generate_quiz_btn"):
+                with st.spinner("Generating 10 questions from your document manuscripts..."):
+                    try:
+                        # Request the JSON formatted quiz from RAG pipeline
+                        raw_json, _ = assistant.generate("Generate 10 questions for the interactive quiz.", mode="quiz")
+                        
+                        # Parse the JSON response
+                        # In case LLM adds markdown wrappers like ```json or any intro text, clean it
+                        cleaned_json = raw_json.strip()
+                        if cleaned_json.startswith("```"):
+                            # strip out ```json or ``` if present
+                            lines = cleaned_json.split("\n")
+                            if lines[0].startswith("```"):
+                                lines = lines[1:]
+                            if lines[-1].startswith("```"):
+                                lines = lines[:-1]
+                            cleaned_json = "\n".join(lines).strip()
+                            
+                        # Double protection: locate index of first [ and last ]
+                        start_idx = cleaned_json.find("[")
+                        end_idx = cleaned_json.rfind("]")
+                        if start_idx != -1 and end_idx != -1:
+                            cleaned_json = cleaned_json[start_idx:end_idx+1]
+                            
+                        questions_list = json.loads(cleaned_json)
+                        
+                        # Ensure we got a list and populate it
+                        if isinstance(questions_list, list) and len(questions_list) > 0:
+                            st.session_state.quiz_questions = questions_list
+                            st.session_state.quiz_user_answers = {}
+                            st.session_state.quiz_submitted = False
+                            st.session_state.quiz_key += 1
+                            st.success(f"Successfully generated **{len(questions_list)}** questions!")
+                            st.rerun()
+                        else:
+                            st.error("Could not parse a valid list of questions from the AI response. Please try again.")
+                    except Exception as e:
+                        st.error(f"Failed to generate quiz: {str(e)}")
+                        st.info("Ensure your LLM is up and running properly and try again.")
+        else:
+            # We have active quiz questions! Display them
+            st.markdown(f"**Quiz Progress: {len(st.session_state.quiz_questions)} Questions Loaded**")
+            
+            # Use form to submit everything at once
+            with st.form(key=f"quiz_form_{st.session_state.quiz_key}"):
+                for idx, q in enumerate(st.session_state.quiz_questions, 1):
+                    st.markdown(f"#### **Q{idx}.** {q['question']}")
+                    
+                    options = q["options"]
+                    # Map options dictionary to list of label choices e.g., "A) option_text"
+                    choices = [f"{key}) {val}" for key, val in options.items()]
+                    
+                    # Track selection
+                    # Default value is None (index=None) so they must select an answer explicitly
+                    saved_ans = st.session_state.quiz_user_answers.get(idx, None)
+                    pre_index = choices.index(saved_ans) if saved_ans in choices else None
+                    
+                    selected_ans = st.radio(
+                        "Select your answer:",
+                        options=choices,
+                        index=pre_index,
+                        key=f"q_radio_{idx}_{st.session_state.quiz_key}",
+                        label_visibility="collapsed"
+                    )
+                    
+                    # Store selected option key (e.g. "A", "B", etc.)
+                    if selected_ans:
+                        st.session_state.quiz_user_answers[idx] = selected_ans
+                    
+                    st.markdown("<hr style='opacity: 0.15; margin: 0.5rem 0;'/>", unsafe_allow_html=True)
+                
+                # Submit button inside form
+                submit_button = st.form_submit_button(label="📝 Submit Quiz & View Grade")
+                
+            if submit_button:
+                if len(st.session_state.quiz_user_answers) < len(st.session_state.quiz_questions):
+                    st.warning("⚠️ You have not answered all 10 questions yet! Please select an answer for every question.")
+                else:
+                    st.session_state.quiz_submitted = True
+                    st.rerun()
+
+            # Display graded results if submitted
+            if st.session_state.quiz_submitted:
+                st.markdown("---")
+                st.markdown("### 📊 Graded Scorecard")
+                
+                # Calculate score
+                score = 0
+                total_q = len(st.session_state.quiz_questions)
+                for idx, q in enumerate(st.session_state.quiz_questions, 1):
+                    user_ans_str = st.session_state.quiz_user_answers.get(idx, "")
+                    user_key = user_ans_str.split(")")[0].strip() if user_ans_str else ""
+                    if user_key == q["answer"]:
+                        score += 1
+                
+                percentage = (score / total_q) * 100
+                
+                # Style scorecard with gold metrics
+                col_score, col_grade = st.columns(2)
+                with col_score:
+                    st.markdown(f"""
+                    <div class="status-card" style="padding: 1.5rem;">
+                        <div class="number">{score} / {total_q}</div>
+                        <div class="label">Correct Answers</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                with col_grade:
+                    st.markdown(f"""
+                    <div class="status-card" style="padding: 1.5rem;">
+                        <div class="number">{percentage:.0f}%</div>
+                        <div class="label">Total Score</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                
+                # Pass/Fail alert
+                if percentage >= 80:
+                    st.success("🎉 **Superb Job!** You have fully mastered these concepts!")
+                elif percentage >= 50:
+                    st.info("👍 **Good Effort!** You passed, but review the explanations below to patch any knowledge gaps.")
+                else:
+                    st.error("📚 **Keep Studying!** Your score is below 50%. Take a Detailed Summary, read through, and try again!")
+                
+                # Detailed breakdown of answers and explanations
+                st.markdown("### 🔍 Answer Explanations Breakdown")
+                for idx, q in enumerate(st.session_state.quiz_questions, 1):
+                    user_ans_str = st.session_state.quiz_user_answers.get(idx, "")
+                    user_key = user_ans_str.split(")")[0].strip() if user_ans_str else "None"
+                    correct_key = q["answer"]
+                    is_correct = user_key == correct_key
+                    
+                    ans_card_style = (
+                        "border-left: 4px solid #6cb98a; background: rgba(108,185,138,0.06);"
+                        if is_correct else
+                        "border-left: 4px solid #c97064; background: rgba(201,112,100,0.06);"
+                    )
+                    
+                    st.markdown(
+                        f"""
+                        <div style='padding: 1.2rem; border: 1px solid rgba(255,255,255,0.05); border-radius: 6px; margin: 1rem 0; {ans_card_style}'>
+                            <h5 style='margin-top: 0; color: #f5ecd7;'>Q{idx}. {q['question']}</h5>
+                            <p style='margin: 0.3rem 0; font-size: 0.92rem; color: #cbd5e1;'>
+                                <b>Your Answer:</b> <span style='color: {"#6cb98a" if is_correct else "#c97064"}'>{user_key}) {q['options'].get(user_key, 'No selection')}</span>
+                            </p>
+                            <p style='margin: 0.3rem 0; font-size: 0.92rem; color: #cbd5e1;'>
+                                <b>Correct Answer:</b> <span style='color: #6cb98a'><b>{correct_key}) {q['options'].get(correct_key)}</b></span>
+                            </p>
+                            <p style='margin-top: 0.8rem; margin-bottom: 0; font-size: 0.9rem; color: #8ea0bb; font-style: italic;'>
+                                💡 <b>Explanation:</b> {q['explanation']}
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True
+                    )
+                
+                # Reset Quiz
+                if st.button("🔄 Reset & Take Another Quiz", key="reset_quiz_btn"):
+                    st.session_state.quiz_questions = None
+                    st.session_state.quiz_user_answers = {}
+                    st.session_state.quiz_submitted = False
+                    st.session_state.quiz_key += 1
+                    st.rerun()
 
 
 # ── Chat input ───────────────────────────────────────────────────────

@@ -1129,37 +1129,6 @@ with st.sidebar:
             use_container_width=True,
         )
 
-    # ── Tips ───────────────────────────────────────────────────────
-    with st.expander("💡 Study Tips", expanded=False):
-        st.markdown(
-            """
-            - **Document Q&A** for factual questions, chat, or custom tasks
-            - Ask to **generate MCQs** or **generate questions (long/short)** inside Document Chat
-            - Choose **Detailed Summary** to get a complete, exam-ready notes file
-            - Use **Coding & Debugging** to generate code, detect bugs/mistakes, and teach code line-by-line or section-by-section (Supports **any** programming language like Python, C++, Java, JavaScript, Rust, etc.)
-            - Upload **PDFs, Word documents, or text files**
-            """
-        )
-
-    # ── About ──────────────────────────────────────────────────────
-    with st.expander("ℹ️ About", expanded=False):
-        st.markdown(
-            """
-            **AI Study Assistant** uses Retrieval-Augmented
-            Generation (RAG) to answer questions grounded in
-            YOUR uploaded files — never invented.
-
-            • Support: PDF, DOCX, TXT, MD<br/>
-            • Cloud LLM: LLaMA-3.1-8B (via Groq)<br/>
-            • Embeddings: BGE-small (in-process)<br/>
-            • Vector store: NumPy cosine similarity<br/>
-            • UI: Streamlit + custom academic theme
-
-            [GitHub](https://github.com/mmoeedz/ai-study-assistant)
-            """,
-            unsafe_allow_html=True,
-        )
-
     # ── Clear all data (simple, no expander) ───────────────────────
     if st.button("🗑️ Clear Data", key="clear_btn",
                  use_container_width=True,

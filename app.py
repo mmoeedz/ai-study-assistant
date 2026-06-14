@@ -339,7 +339,8 @@ div[data-testid="stRadio"] > div > label:has(input:checked)::after {
     font-weight: 700;
 }
 
-.response-card code {
+/* Styled inline code (not inside pre blocks) */
+.response-card :not(pre) > code {
     background: #f3f4f6 !important;
     color: #5b21b6 !important;
     border-radius: 4px;
@@ -347,6 +348,28 @@ div[data-testid="stRadio"] > div > label:has(input:checked)::after {
     font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
     font-size: 0.9em !important;
     border: 1px solid #e5e7eb;
+}
+
+/* Styled fenced code blocks like modern LLMs (greyish black background) */
+.response-card pre {
+    background: #18181c !important;
+    border: 1px solid #2e2e33 !important;
+    border-radius: 8px !important;
+    padding: 1.2rem !important;
+    overflow-x: auto !important;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.3) !important;
+    margin: 1rem 0 !important;
+}
+
+/* Neutralize generic overrides inside code blocks to preserve colorful syntax highlighting */
+.response-card pre code {
+    background: transparent !important;
+    border: none !important;
+    color: inherit !important;
+    padding: 0 !important;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace !important;
+    font-size: 0.92em !important;
+    border-radius: 0 !important;
 }
 
 .response-card hr {

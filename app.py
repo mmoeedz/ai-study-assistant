@@ -1317,15 +1317,14 @@ if section == "read":
 else:
     # Code mode
     mode = "coding"
-    
     # Upload images with plus sign
     st.markdown(
         """
         <div class="upload-card-header">
             <div class="upload-icon">🖼️</div>
             <div class="upload-text">
-                <div class="upload-title">LLM Coding Mode — Images & Snapshot Upload</div>
-                <div class="upload-sub">Supports uploading code snapshots, architecture diagrams, or compiler screenshots</div>
+                <div class="upload-title">LLM Coding Mode — Paste (Ctrl+V) or Upload Image</div>
+                <div class="upload-sub">Click the ➕ box and hit <b>Ctrl+V</b> to paste from clipboard, or drag/drop snapshots and code pictures</div>
             </div>
         </div>
         """,
@@ -1340,9 +1339,18 @@ else:
     )
     if uploaded_pic is not None:
         import base64
-        # Show a compact image preview
+        # Show a gorgeous, compact preview box with elegant border styling like modern LLMs
+        st.markdown(
+            """
+            <div style='background: rgba(212,168,75,0.06); padding: 0.8rem; border: 1px solid rgba(212,168,75,0.35); border-radius: 6px; margin: 0.5rem 0;'>
+                <p style='margin: 0 0 0.4rem 0; font-size: 0.82rem; color: #f1d490; font-weight: 500;'>🖼️ Attached Reference Image Preview:</p>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
         st.image(uploaded_pic, width=280)
         # Convert image to base64
+        uploaded_pic.seek(0)
         pic_bytes = uploaded_pic.read()
         image_base64 = base64.b64encode(pic_bytes).decode("utf-8")
 
@@ -1388,6 +1396,17 @@ if not st.session_state.current_chat["messages"] and not assistant.indexed_files
 for entry in st.session_state.current_chat["messages"]:
     with st.chat_message("user", avatar="✍️"):
         st.markdown(entry["query"])
+        # Check and render attached reference image thumbnail for perfect chat flow references
+        if entry.get("image_base64"):
+            st.markdown(
+                f"""
+                <div style='background: rgba(255,255,255,0.02); padding: 0.6rem; border: 1px solid rgba(212,168,75,0.22); border-radius: 6px; margin: 0.5rem 0; width: fit-content;'>
+                    <p style='margin: 0 0 0.3rem 0; font-size: 0.76rem; color: #8ea0bb; font-style: italic; letter-spacing: 0.05em;'>🖼️ Reference Image Attached</p>
+                    <img src="data:image/jpeg;base64,{entry['image_base64']}" style="max-height: 180px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.1); display: block;"/>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
     with st.chat_message("assistant", avatar="📜"):
         st.markdown(f'<div class="response-card">{entry["answer"]}</div>', unsafe_allow_html=True)
         # Source chips

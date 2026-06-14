@@ -1184,8 +1184,8 @@ with st.sidebar:
         <div style='text-align:center; color:#8ea0bb; font-size:0.72rem;
                     letter-spacing:0.08em; font-style:italic; line-height:1.5;'>
             <span style='color:#d4a84b;'>✦</span><br/>
-            Powered by LLaMA&nbsp;3.1<br/>
-            <span style='font-size:0.68rem;'>via Groq Cloud</span>
+            Academic Intelligence Suite<br/>
+            <span style='font-size:0.68rem;'>Custom Neural Retrieval</span>
         </div>
         """,
         unsafe_allow_html=True,

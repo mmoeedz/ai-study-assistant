@@ -924,8 +924,17 @@ def _short_title(q: str, max_len: int = 38) -> str:
     return q if len(q) <= max_len else q[: max_len - 1] + "…"
 
 
+import inspect
 if "assistant" not in st.session_state:
     st.session_state.assistant = StudyAssistant()
+else:
+    # Self-heal active session state class cache mismatches from hot-reloads
+    try:
+        sig = inspect.signature(st.session_state.assistant.generate)
+        if "image_base64" not in sig.parameters:
+            st.session_state.assistant = StudyAssistant()
+    except Exception:
+        st.session_state.assistant = StudyAssistant()
 if "current_chat" not in st.session_state:
     st.session_state.current_chat = new_chat()
 if "processed" not in st.session_state:

@@ -278,13 +278,17 @@ class OllamaClient:
     def generate(
         self, prompt: str, model: str,
         temperature: float = 0.3, num_ctx: int = 4096,
+        image_base64: str = None,
     ) -> str:
+        payload = {
+            "model": model, "prompt": prompt, "stream": False,
+            "options": {"temperature": temperature, "num_ctx": num_ctx},
+        }
+        if image_base64:
+            payload["images"] = [image_base64]
         resp = requests.post(
             f"{self.base_url}/api/generate",
-            json={
-                "model": model, "prompt": prompt, "stream": False,
-                "options": {"temperature": temperature, "num_ctx": num_ctx},
-            },
+            json=payload,
             timeout=300,
         )
         resp.raise_for_status()
@@ -306,11 +310,32 @@ class GroqClient:
     def generate(
         self, prompt: str, model: str,
         temperature: float = 0.3, num_ctx: int = 4096,  # num_ctx kept for sig parity
+        image_base64: str = None,
     ) -> str:
         import time as _t  # local import to avoid name shadow
         last_exc = None
+        
+        # If there is an image, use standard Groq vision model
+        active_model = "llama-3.2-11b-vision-preview" if image_base64 else model
+        
         for attempt in range(4):  # up to 4 attempts on 429 / transient errors
             try:
+                if image_base64:
+                    messages = [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }]
+                else:
+                    messages = [{"role": "user", "content": prompt}]
+
                 resp = requests.post(
                     f"{self.base_url}/chat/completions",
                     headers={
@@ -318,8 +343,8 @@ class GroqClient:
                         "Content-Type": "application/json",
                     },
                     json={
-                        "model": model,
-                        "messages": [{"role": "user", "content": prompt}],
+                        "model": active_model,
+                        "messages": messages,
                         "temperature": temperature,
                     },
                     timeout=120,
@@ -707,13 +732,14 @@ Conclude with a brief note telling the user that they can now ask questions, gen
 
     # ── Generation ───────────────────────────────────────────────────
 
-    def generate(self, query: str, mode: str = "qa") -> Tuple[str, List[Document]]:
+    def generate(self, query: str, mode: str = "qa", image_base64: str = None) -> Tuple[str, List[Document]]:
         """
         Full RAG: retrieve context → format prompt → call LLM.
 
         Args:
             query: User's question or request.
             mode:  One of 'qa', 'summarize', 'mcq', 'eli5'.
+            image_base64: Optional base64 encoded image string for multimodal support.
 
         Returns:
             (answer_text, source_documents)
@@ -728,6 +754,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
                     model=config.LLM_MODEL,
                     temperature=config.LLM_TEMPERATURE,
                     num_ctx=config.LLM_NUM_CTX,
+                    image_base64=image_base64,
                 )
                 return response, []
             else:
@@ -787,6 +814,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             model=config.LLM_MODEL,
             temperature=config.LLM_TEMPERATURE,
             num_ctx=config.LLM_NUM_CTX,
+            image_base64=image_base64,
         )
         return response, docs
 

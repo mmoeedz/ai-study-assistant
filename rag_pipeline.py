@@ -279,9 +279,20 @@ class OllamaClient:
         self, prompt: str, model: str,
         temperature: float = 0.3, num_ctx: int = 4096,
         image_base64: str = None,
+        history: list = None,
     ) -> str:
+        full_prompt = ""
+        if history:
+            for h in history:
+                q = h.get("query", "")
+                if q.startswith("📖 Upload:"):
+                    continue
+                a = h.get("answer", "")
+                full_prompt += f"User: {q}\nAssistant: {a}\n"
+        full_prompt += f"User: {prompt}\nAssistant:"
+
         payload = {
-            "model": model, "prompt": prompt, "stream": False,
+            "model": model, "prompt": full_prompt, "stream": False,
             "options": {"temperature": temperature, "num_ctx": num_ctx},
         }
         if image_base64:
@@ -311,17 +322,53 @@ class GroqClient:
         self, prompt: str, model: str,
         temperature: float = 0.3, num_ctx: int = 4096,  # num_ctx kept for sig parity
         image_base64: str = None,
+        history: list = None,
     ) -> str:
         import time as _t  # local import to avoid name shadow
         last_exc = None
         
-        # If there is an image, use standard Groq vision model
-        active_model = "llama-3.2-11b-vision-preview" if image_base64 else model
+        has_any_image = bool(image_base64)
+        if history:
+            for h in history:
+                if h.get("image_base64"):
+                    has_any_image = True
+                    break
+
+        active_model = "meta-llama/llama-4-scout-17b-16e-instruct" if has_any_image else model
         
         for attempt in range(4):  # up to 4 attempts on 429 / transient errors
             try:
+                messages = []
+                if history:
+                    for h in history:
+                        q = h.get("query", "")
+                        if q.startswith("📖 Upload:"):
+                            continue
+                        a = h.get("answer", "")
+                        img = h.get("image_base64", None)
+                        
+                        if img:
+                            messages.append({
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": q},
+                                    {
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": f"data:image/jpeg;base64,{img}"
+                                        }
+                                    }
+                                ]
+                            })
+                        else:
+                            messages.append({"role": "user", "content": q})
+                        
+                        if a:
+                            messages.append({"role": "assistant", "content": a})
+
+                # Append the current prompt
                 if image_base64:
-                    messages = [{
+                    messages.append({
                         "role": "user",
                         "content": [
                             {"type": "text", "text": prompt},
@@ -332,9 +379,9 @@ class GroqClient:
                                 }
                             }
                         ]
-                    }]
+                    })
                 else:
-                    messages = [{"role": "user", "content": prompt}]
+                    messages.append({"role": "user", "content": prompt})
 
                 resp = requests.post(
                     f"{self.base_url}/chat/completions",
@@ -732,7 +779,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
 
     # ── Generation ───────────────────────────────────────────────────
 
-    def generate(self, query: str, mode: str = "qa", image_base64: str = None) -> Tuple[str, List[Document]]:
+    def generate(self, query: str, mode: str = "qa", image_base64: str = None, history: list = None) -> Tuple[str, List[Document]]:
         """
         Full RAG: retrieve context → format prompt → call LLM.
 
@@ -740,6 +787,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             query: User's question or request.
             mode:  One of 'qa', 'summarize', 'mcq', 'eli5'.
             image_base64: Optional base64 encoded image string for multimodal support.
+            history: Optional conversation history.
 
         Returns:
             (answer_text, source_documents)
@@ -755,6 +803,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
                     temperature=config.LLM_TEMPERATURE,
                     num_ctx=config.LLM_NUM_CTX,
                     image_base64=image_base64,
+                    history=history,
                 )
                 return response, []
             else:
@@ -815,6 +864,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
             temperature=config.LLM_TEMPERATURE,
             num_ctx=config.LLM_NUM_CTX,
             image_base64=image_base64,
+            history=history,
         )
         return response, docs
 

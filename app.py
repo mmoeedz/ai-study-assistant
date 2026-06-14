@@ -1619,7 +1619,13 @@ if prompt := st.chat_input(
                 img_to_pass = base64.b64encode(pic_bytes).decode("utf-8")
 
             with st.spinner("Consulting the manuscripts…"):
-                answer, source_docs = assistant.generate(prompt, mode=mode, image_base64=img_to_pass)
+                # Pass full message history so the model has short-term conversation memory and remembers past images!
+                answer, source_docs = assistant.generate(
+                    prompt, 
+                    mode=mode, 
+                    image_base64=img_to_pass,
+                    history=st.session_state.current_chat["messages"]
+                )
 
             # Display formatted answer with Read More expansion
             # Show ~80% initially, expand for full details
@@ -1672,6 +1678,7 @@ if prompt := st.chat_input(
                 "query": prompt,
                 "mode": mode,
                 "answer": answer,
+                "image_base64": img_to_pass, # persist image base64 directly in history message for perfect multi-turn memory
                 "sources": source_labels if source_docs else [],
                 "source_texts": source_texts if source_docs else [],
             })

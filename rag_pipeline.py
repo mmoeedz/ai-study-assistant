@@ -958,20 +958,23 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
         
         return final_summary, all_docs
 
-    # ── Quiz Generation with Batch Processing ───────────────────────
-    def _generate_quiz_batched(self, query: str) -> Tuple[str, List[Document]]:
+    # ── Quiz Generation ─────────────────────────────────────────────
+    def _generate_quiz_batched(self, query: str, target: int = 10) -> Tuple[str, List[Document]]:
         """
-        Generate up to 10 diverse multiple-choice questions from the indexed
-        documents.
+        Generate ``target`` (default 10) diverse multiple-choice questions
+        from the indexed documents.
 
-        Key properties (fixes for the "same questions / same options" bug):
-          • Samples chunks from ACROSS the whole corpus, not just the front.
-          • Uses a higher temperature so regenerations differ.
-          • Strictly validates every question and de-duplicates them.
-          • Raises a clear error when the model fails — it never returns
-            templated placeholder questions.
+        Uses a top-up loop: it keeps asking the model for MORE questions —
+        telling it which ones already exist so it produces new ones — until it
+        reaches the target or runs out of attempts. This guarantees we return
+        as close to 10 questions as the material allows, instead of however
+        few survive a single validation pass.
 
-        Returns a JSON string with the question list.
+        Key properties:
+          • Samples chunks from ACROSS the whole corpus each round (shuffled).
+          • Higher temperature so regenerations differ.
+          • Strictly validates + de-duplicates every question.
+          • Never returns templated placeholder questions.
         """
         import random
 
@@ -994,8 +997,9 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
         if not docs_pool:
             docs_pool = list(all_docs)
 
-        QUIZ_TEMPERATURE = 0.8  # higher temp → questions vary between runs
-        BATCH_SIZE = 25
+        QUIZ_TEMPERATURE = 0.8   # higher temp → questions vary between runs
+        SAMPLE_SIZE = 25         # max chunks fed to the model per round
+        MAX_ROUNDS = 6           # top-up attempts to reach the target
         errors: List[str] = []
 
         def _build_context(batch: List[Document]) -> str:
@@ -1006,14 +1010,47 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
                 parts.append(f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}")
             return "\n\n---\n\n".join(parts)
 
-        # ── Small corpus: one call over everything ───────────────────
-        if len(docs_pool) <= BATCH_SIZE:
-            # Shuffle so repeated generations emphasise different chunks.
-            batch = list(docs_pool)
-            random.shuffle(batch)
-            context = _build_context(batch)
-            prompt_template = PROMPT_MAP.get("quiz", PROMPT_MAP["qa"])
-            prompt = prompt_template.format(context=context, question=query)
+        collected: List[Dict] = []
+        seen_q: set = set()
+        dry_rounds = 0  # consecutive rounds that added no new questions
+
+        def _norm(q: str) -> str:
+            return " ".join((q or "").lower().split())
+
+        for round_idx in range(MAX_ROUNDS):
+            if len(collected) >= target:
+                break
+            need = target - len(collected)
+
+            # Fresh shuffled sample of the corpus each round.
+            sample = random.sample(docs_pool, min(len(docs_pool), SAMPLE_SIZE))
+            context = _build_context(sample)
+
+            # Tell the model what already exists so it makes NEW questions.
+            avoid_block = ""
+            if collected:
+                avoid_list = "\n".join(f"- {q['question']}" for q in collected[-20:])
+                avoid_block = (
+                    "\nDo NOT repeat or reword any of these already-used "
+                    f"questions:\n{avoid_list}\n"
+                )
+
+            prompt = f"""You are an expert examiner creating a multiple-choice quiz based ONLY on the material below.
+
+Create {need} NEW, unique multiple-choice questions. Each must have exactly 4 DISTINCT options (A, B, C, D) and one correct answer. Vary which option is correct — do NOT always make it "A". Base every question strictly on the material.
+{avoid_block}
+Material:
+{context}
+
+Return ONLY a valid JSON array with {need} objects, nothing else (no markdown, no ```json wrapper):
+[
+  {{
+    "question": "question text",
+    "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+    "answer": "B",
+    "explanation": "why the correct option is right"
+  }}
+]"""
 
             try:
                 response = self.llm.generate(
@@ -1023,72 +1060,34 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
                     num_ctx=config.LLM_NUM_CTX,
                 )
             except Exception as e:
-                raise RuntimeError(f"Quiz generation failed: {str(e)}")
-
-            questions = self._dedupe_quiz_questions(self._parse_quiz_json(response))
-            if not questions:
-                raise RuntimeError(
-                    "Quiz generation failed: the model did not return any valid "
-                    "questions. Please try again."
-                )
-            return json.dumps(questions[:10], ensure_ascii=False, indent=2), all_docs
-
-        # ── Large corpus: spread batches across the whole document ───
-        batches = [
-            docs_pool[i : i + BATCH_SIZE]
-            for i in range(0, len(docs_pool), BATCH_SIZE)
-        ]
-        random.shuffle(batches)  # vary which region we start from each run
-
-        collected: List[Dict] = []
-        for batch_idx, batch in enumerate(batches, 1):
-            if len(collected) >= 10:
-                break
-            batch = list(batch)
-            random.shuffle(batch)
-            context = _build_context(batch)
-
-            remaining = 10 - len(collected)
-            batch_question_count = max(2, min(4, remaining))
-            batch_prompt = f"""You are an expert examiner creating multiple-choice questions.
-
-From this material, create {batch_question_count} unique multiple-choice questions (each with exactly 4 DISTINCT options A-D and one correct answer). The correct answer must NOT always be option A — vary which option is correct.
-
-Material:
-{context}
-
-Return ONLY a valid JSON array with {batch_question_count} objects in this format (no markdown, no ```json wrapper):
-[
-  {{
-    "question": "question text",
-    "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
-    "answer": "A",
-    "explanation": "why this is correct"
-  }}
-]"""
-
-            try:
-                batch_response = self.llm.generate(
-                    prompt=batch_prompt,
-                    model=config.LLM_MODEL,
-                    temperature=QUIZ_TEMPERATURE,
-                    num_ctx=config.LLM_NUM_CTX,
-                )
-            except Exception as e:
-                errors.append(f"batch {batch_idx}: {str(e)[:120]}")
+                errors.append(f"round {round_idx + 1}: {str(e)[:120]}")
                 continue
 
-            collected.extend(self._parse_quiz_json(batch_response))
+            added = 0
+            for q in self._parse_quiz_json(response):
+                key = _norm(q["question"])
+                if key and key not in seen_q:
+                    seen_q.add(key)
+                    collected.append(q)
+                    added += 1
+
+            # Stop early if the material is too thin to keep yielding new items.
+            if added == 0:
+                dry_rounds += 1
+                if dry_rounds >= 2:
+                    break
+            else:
+                dry_rounds = 0
 
         questions = self._dedupe_quiz_questions(collected)
         if not questions:
             detail = f" ({'; '.join(errors)})" if errors else ""
             raise RuntimeError(
-                "Quiz generation failed: no valid questions were produced"
-                + detail + "."
+                "Quiz generation failed: the model did not return any valid "
+                "questions" + detail + ". Please try again."
             )
 
-        return json.dumps(questions[:10], ensure_ascii=False, indent=2), all_docs
+        return json.dumps(questions[:target], ensure_ascii=False, indent=2), all_docs
 
     # ── Quiz JSON parsing & validation helpers ──────────────────────
     @staticmethod

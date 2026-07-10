@@ -1295,24 +1295,27 @@ if section == "read":
             mprogress.progress(1.0)
             mstatus.caption("✅ Complete!")
         
-        # NEW: Automatically generate a short summary using the LLM (acting like a normal LLM)
-        with st.spinner("Analyzing document contents for a quick summary…"):
-            try:
-                auto_summary = assistant.generate_auto_summary()
-            except Exception as e:
-                auto_summary = f"I have successfully indexed {num_docs} document(s) with {num_chunks} chunks. You can now start asking questions, generating MCQs, or asking for a detailed summary!"
-                
-        # Append the short summary as the system welcoming/intro message in chat history
-        st.session_state.current_chat["messages"].append({
-            "query": f"📖 Upload: {', '.join([f.name for f in main_files])}",
-            "mode": "qa",
-            "answer": auto_summary,
-            "sources": [],
-            "source_texts": [],
-        })
-        save_chat(st.session_state.current_chat)
-        st.session_state.processed = True
-        st.rerun()
+        if num_docs > 0:
+            # NEW: Automatically generate a short summary using the LLM (acting like a normal LLM)
+            with st.spinner("Analyzing document contents for a quick summary…"):
+                try:
+                    auto_summary = assistant.generate_auto_summary()
+                except Exception as e:
+                    auto_summary = f"I have successfully indexed {num_docs} document(s) with {num_chunks} chunks. You can now start asking questions, generating MCQs, or asking for a detailed summary!"
+                    
+            # Append the short summary as the system welcoming/intro message in chat history
+            st.session_state.current_chat["messages"].append({
+                "query": f"📖 Upload: {', '.join([f.name for f in main_files])}",
+                "mode": "qa",
+                "answer": auto_summary,
+                "sources": [],
+                "source_texts": [],
+            })
+            save_chat(st.session_state.current_chat)
+            st.session_state.processed = True
+            st.rerun()
+        else:
+            st.info("ℹ️ All selected files are already fully indexed in your catalogue.")
 
 else:
     # Code mode

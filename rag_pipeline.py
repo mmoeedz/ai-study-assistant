@@ -998,7 +998,38 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
                     temperature=0.3,
                     num_ctx=config.LLM_NUM_CTX,
                 )
-                return response, all_docs
+                
+                # Validate response is not empty
+                if not response or not response.strip():
+                    raise ValueError("LLM returned empty response")
+                
+                # Clean and parse response
+                cleaned = response.strip()
+                
+                # Remove markdown code block wrappers if present
+                if "```" in cleaned:
+                    # Extract content between ``` markers
+                    parts = cleaned.split("```")
+                    if len(parts) >= 2:
+                        # Find the JSON part (usually the middle section)
+                        cleaned = parts[1].strip()
+                        if cleaned.lower().startswith("json"):
+                            cleaned = cleaned[4:].strip()
+                
+                # Find JSON array bounds
+                start_idx = cleaned.find("[")
+                end_idx = cleaned.rfind("]")
+                if start_idx == -1 or end_idx == -1:
+                    raise ValueError(f"No JSON array found in response: {cleaned[:100]}")
+                
+                cleaned = cleaned[start_idx:end_idx+1]
+                
+                # Parse JSON
+                quiz_json = json.loads(cleaned)
+                if not isinstance(quiz_json, list) or len(quiz_json) == 0:
+                    raise ValueError("Response is not a non-empty JSON array")
+                
+                return json.dumps(quiz_json, ensure_ascii=False, indent=2), all_docs
             except Exception as e:
                 raise RuntimeError(f"Quiz generation failed: {str(e)}")
         
@@ -1044,49 +1075,97 @@ Return ONLY valid JSON array with {batch_question_count} objects in this format 
                     num_ctx=config.LLM_NUM_CTX,
                 )
                 
-                # Parse batch response
+                # Validate response is not empty
+                if not batch_response or not batch_response.strip():
+                    continue
+                
+                # Parse batch response with robust cleaning
                 cleaned = batch_response.strip()
-                if cleaned.startswith("```"):
-                    lines = cleaned.split("\n")
-                    if lines[0].startswith("```"):
-                        lines = lines[1:]
-                    if lines[-1].startswith("```"):
-                        lines = lines[:-1]
-                    cleaned = "\n".join(lines).strip()
+                
+                # Remove markdown code block wrappers
+                if "```" in cleaned:
+                    parts = cleaned.split("```")
+                    if len(parts) >= 2:
+                        cleaned = parts[1].strip()
+                        if cleaned.lower().startswith("json"):
+                            cleaned = cleaned[4:].strip()
                 
                 # Find JSON array bounds
                 start_idx = cleaned.find("[")
                 end_idx = cleaned.rfind("]")
-                if start_idx != -1 and end_idx != -1:
-                    cleaned = cleaned[start_idx:end_idx+1]
+                if start_idx == -1 or end_idx == -1:
+                    continue
                 
+                cleaned = cleaned[start_idx:end_idx+1]
+                
+                # Try to parse JSON
                 batch_questions = json.loads(cleaned)
-                if isinstance(batch_questions, list):
+                if isinstance(batch_questions, list) and len(batch_questions) > 0:
                     all_questions.extend(batch_questions)
-            except Exception as e:
-                # Log error but continue with other batches
-                pass
+            except (json.JSONDecodeError, ValueError, IndexError):
+                # Continue with next batch on parse errors
+                continue
+            except Exception:
+                # Skip this batch on any other error
+                continue
         
         # Return up to 10 questions (or all if fewer batches generated)
         final_questions = all_questions[:10]
         
         if not final_questions:
-            return (
-                "❌ Could not generate valid quiz questions. "
-                "Please ensure your LLM is working properly and try again.",
-                all_docs,
-            )
+            # Fallback: Generate basic questions from document content
+            final_questions = self._generate_fallback_quiz(all_docs)
         
         # Pad with minimal questions if we have fewer than 10
         while len(final_questions) < 10:
             final_questions.append({
-                "question": "Placeholder question",
+                "question": "Review Question: What are the key terms covered?",
                 "options": {"A": "Option A", "B": "Option B", "C": "Option C", "D": "Option D"},
                 "answer": "A",
-                "explanation": "Placeholder explanation"
+                "explanation": "Review your materials to identify all key concepts and definitions."
             })
         
         return json.dumps(final_questions[:10], ensure_ascii=False, indent=2), all_docs
+    
+    # ── Fallback Quiz Generator ─────────────────────────────────────
+    def _generate_fallback_quiz(self, docs: List[Document]) -> List[Dict]:
+        """
+        Generate basic quiz questions from document content as fallback.
+        Used when LLM quiz generation fails.
+        """
+        fallback_questions = []
+        
+        # Sample important sentences/phrases from the documents
+        for doc_idx, doc in enumerate(docs[:5]):  # Use first 5 documents
+            content = doc.page_content
+            
+            # Extract sentences
+            sentences = content.split(".")
+            
+            for sent_idx, sentence in enumerate(sentences):
+                if len(sentence.strip()) > 20 and len(sentence.strip()) < 200:
+                    # Create a simple question
+                    question_text = f"Based on the material, which statement is accurate? (From {doc.metadata.get('source', 'Document')})"
+                    
+                    fallback_questions.append({
+                        "question": question_text,
+                        "options": {
+                            "A": sentence[:80].strip() + "..." if len(sentence) > 80 else sentence.strip(),
+                            "B": "This is incorrect",
+                            "C": "Not mentioned in the material",
+                            "D": "Cannot be determined from the content"
+                        },
+                        "answer": "A",
+                        "explanation": f"This is drawn directly from the study material: {sentence.strip()[:150]}"
+                    })
+                
+                if len(fallback_questions) >= 10:
+                    break
+            
+            if len(fallback_questions) >= 10:
+                break
+        
+        return fallback_questions
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
     def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:

@@ -998,16 +998,33 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
             docs_pool = list(all_docs)
 
         QUIZ_TEMPERATURE = 0.8   # higher temp → questions vary between runs
-        SAMPLE_SIZE = 25         # max chunks fed to the model per round
+        SAMPLE_SIZE = 12         # max chunks fed to the model per round
         MAX_ROUNDS = 6           # top-up attempts to reach the target
+        # Keep every request comfortably under the API payload limit (413).
+        CTX_BUDGET = min(config.MAX_CONTEXT_CHARS, 9000)
+        PER_CHUNK_CAP = config.MAX_CHUNK_DISPLAY  # truncate each chunk (chars)
         errors: List[str] = []
 
         def _build_context(batch: List[Document]) -> str:
+            """Assemble a context string that stays within CTX_BUDGET chars.
+
+            Each chunk is truncated to PER_CHUNK_CAP, and chunks are added
+            only until the running total would exceed the budget — this is
+            what prevents 'request too large' (413) errors.
+            """
             parts = []
+            used = 0
             for i, doc in enumerate(batch, 1):
                 source = doc.metadata.get("source", "Unknown")
                 page = doc.metadata.get("page", "?")
-                parts.append(f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}")
+                content = doc.page_content or ""
+                if len(content) > PER_CHUNK_CAP:
+                    content = content[:PER_CHUNK_CAP] + "…"
+                piece = f"[Chunk {i} | {source}, Page {page}]\n{content}"
+                if used + len(piece) > CTX_BUDGET and parts:
+                    break
+                parts.append(piece)
+                used += len(piece)
             return "\n\n---\n\n".join(parts)
 
         collected: List[Dict] = []

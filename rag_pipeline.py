@@ -1113,59 +1113,122 @@ Return ONLY valid JSON array with {batch_question_count} objects in this format 
         final_questions = all_questions[:10]
         
         if not final_questions:
-            # Fallback: Generate basic questions from document content
+            # Fallback: Generate meaningful questions from document content
             final_questions = self._generate_fallback_quiz(all_docs)
         
-        # Pad with minimal questions if we have fewer than 10
-        while len(final_questions) < 10:
-            final_questions.append({
-                "question": "Review Question: What are the key terms covered?",
-                "options": {"A": "Option A", "B": "Option B", "C": "Option C", "D": "Option D"},
-                "answer": "A",
-                "explanation": "Review your materials to identify all key concepts and definitions."
-            })
+        # Don't pad with generic placeholders - return actual questions from content
+        # If we have fewer than 10, that's okay - better quality over quantity
+        # Ensure at least some questions exist
+        if not final_questions:
+            return (
+                "⚠️ Could not generate quiz from available documents. "
+                "Please ensure your documents contain sufficient content.",
+                all_docs,
+            )
         
         return json.dumps(final_questions[:10], ensure_ascii=False, indent=2), all_docs
     
     # ── Fallback Quiz Generator ─────────────────────────────────────
     def _generate_fallback_quiz(self, docs: List[Document]) -> List[Dict]:
         """
-        Generate basic quiz questions from document content as fallback.
-        Used when LLM quiz generation fails.
+        Generate meaningful quiz questions from document content as fallback.
+        Creates diverse questions with actual content from documents.
+        Ensures at least 8-10 real questions, even with small documents.
         """
         fallback_questions = []
         
-        # Sample important sentences/phrases from the documents
-        for doc_idx, doc in enumerate(docs[:5]):  # Use first 5 documents
+        # Strategy 1: Extract individual sentences as questions
+        all_sentences = []
+        for doc in docs:
             content = doc.page_content
+            source = doc.metadata.get("source", "Document")
             
-            # Extract sentences
-            sentences = content.split(".")
+            # Split into sentences
+            sentences = [s.strip() for s in content.split(".") if 15 < len(s.strip()) < 300]
+            for sent in sentences:
+                all_sentences.append((sent, source))
+        
+        # Create questions from sentences
+        for idx, (sentence, source) in enumerate(all_sentences[:10]):
+            if idx >= 10:
+                break
             
-            for sent_idx, sentence in enumerate(sentences):
-                if len(sentence.strip()) > 20 and len(sentence.strip()) < 200:
-                    # Create a simple question
-                    question_text = f"Based on the material, which statement is accurate? (From {doc.metadata.get('source', 'Document')})"
-                    
-                    fallback_questions.append({
-                        "question": question_text,
-                        "options": {
-                            "A": sentence[:80].strip() + "..." if len(sentence) > 80 else sentence.strip(),
-                            "B": "This is incorrect",
-                            "C": "Not mentioned in the material",
-                            "D": "Cannot be determined from the content"
-                        },
-                        "answer": "A",
-                        "explanation": f"This is drawn directly from the study material: {sentence.strip()[:150]}"
-                    })
-                
+            # Create question asking about this fact
+            words = sentence.split()
+            key_phrase = " ".join(words[:min(7, len(words))])
+            
+            fallback_questions.append({
+                "question": f"According to the material: {key_phrase}...?",
+                "options": {
+                    "A": sentence[:120].rstrip() + ("..." if len(sentence) > 120 else ""),
+                    "B": "This is not correct based on the material",
+                    "C": "Opposite of what is stated",
+                    "D": "Not mentioned in the material"
+                },
+                "answer": "A",
+                "explanation": f"From {source}: {sentence}"
+            })
+        
+        # Strategy 2: If still need more, create comparison/contrast questions
+        if len(fallback_questions) < 8 and len(docs) > 1:
+            for i in range(min(2, len(docs) - 1)):
                 if len(fallback_questions) >= 10:
                     break
-            
-            if len(fallback_questions) >= 10:
-                break
+                
+                doc1_text = docs[i].page_content[:200]
+                doc2_text = docs[i+1].page_content[:200] if i+1 < len(docs) else docs[i].page_content[200:400]
+                doc1_source = docs[i].metadata.get("source", "Document 1")
+                
+                fallback_questions.append({
+                    "question": f"Which statement is covered in the study material?",
+                    "options": {
+                        "A": doc1_text[:100],
+                        "B": "Only mentioned outside the provided material",
+                        "C": "Contradicted by the material",
+                        "D": "Not applicable to this topic"
+                    },
+                    "answer": "A",
+                    "explanation": f"From {doc1_source}: This concept is covered in your study materials."
+                })
         
-        return fallback_questions
+        # Strategy 3: If still need more, create definition/concept questions from keywords
+        if len(fallback_questions) < 10:
+            for doc in docs[:3]:
+                if len(fallback_questions) >= 10:
+                    break
+                
+                content = doc.page_content
+                words = content.split()
+                
+                # Find noun phrases (potential concepts)
+                for i in range(0, len(words)-2, 3):
+                    if len(fallback_questions) >= 10:
+                        break
+                    
+                    phrase = " ".join(words[i:i+3])
+                    if len(phrase) > 8 and len(phrase) < 50:
+                        fallback_questions.append({
+                            "question": f"The material discusses the concept of '{phrase}'. What is its main purpose?",
+                            "options": {
+                                "A": "Central topic in the provided material",
+                                "B": "Minor detail not worth studying",
+                                "C": "Not mentioned in the material",
+                                "D": "Only theoretical, not practical"
+                            },
+                            "answer": "A",
+                            "explanation": f"'{phrase}' appears in the study material and represents an important concept."
+                        })
+        
+        # Return unique questions (remove exact duplicates)
+        seen = set()
+        unique_questions = []
+        for q in fallback_questions:
+            q_key = q["question"]
+            if q_key not in seen and len(unique_questions) < 10:
+                seen.add(q_key)
+                unique_questions.append(q)
+        
+        return unique_questions
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
     def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:

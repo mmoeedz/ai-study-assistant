@@ -813,22 +813,16 @@ Conclude with a brief note telling the user that they can now ask questions, gen
                     [],
                 )
 
-        # Special handling for summarize and quiz: USE ALL DOCUMENTS, not just top chunks
+        # Special handling for summarize and quiz: USE COMPREHENSIVE CONTEXT with batching
         if mode == "summarize":
             return self._generate_comprehensive_summary(query)
         
         if mode == "quiz":
-            # For quiz generation, use ALL documents for comprehensive question coverage
-            all_docs = self.retrieve_all()
-            if not all_docs:
-                return (
-                    "⚠️ No documents have been indexed yet. "
-                    "Please upload and process documents first.",
-                    [],
-                )
-            docs = all_docs
+            # For quiz generation, use comprehensive document coverage but with batch processing to avoid 413 errors
+            return self._generate_quiz_batched(query)
+        
         # For other modes: retrieve relevant chunks
-        elif mode == "mcq":
+        if mode == "mcq":
             k = min(8, self.total_chunks or 8)
             docs = self.retrieve(query, k=k)
         else:
@@ -963,6 +957,136 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
                 final_summary = f"Error merging summaries: {str(e)}\n\nPartial content:\n{merged_content[:5000]}"
         
         return final_summary, all_docs
+
+    # ── Quiz Generation with Batch Processing ───────────────────────
+    def _generate_quiz_batched(self, query: str) -> Tuple[str, List[Document]]:
+        """
+        Generate 10 multiple-choice questions from comprehensive document coverage.
+        Uses batch processing to stay within API context limits.
+        
+        Returns JSON string with 10 questions and explanations.
+        """
+        all_docs = self.retrieve_all()
+        if not all_docs:
+            return (
+                "⚠️ No documents have been indexed yet. "
+                "Please upload and process documents first.",
+                [],
+            )
+
+        # Smart batch sizing: aim for ~20-25KB per batch (safe margin below limits)
+        BATCH_SIZE = 25  # ~25 chunks × ~1000 chars = ~25KB
+        total_chunks = len(all_docs)
+        
+        # If we have few docs, send all at once
+        if total_chunks <= BATCH_SIZE:
+            context_parts = []
+            for i, doc in enumerate(all_docs, 1):
+                source = doc.metadata.get("source", "Unknown")
+                page = doc.metadata.get("page", "?")
+                chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}"
+                context_parts.append(chunk_text)
+            
+            context = "\n\n---\n\n".join(context_parts)
+            prompt_template = PROMPT_MAP.get("quiz", PROMPT_MAP["qa"])
+            prompt = prompt_template.format(context=context, question=query)
+            
+            try:
+                response = self.llm.generate(
+                    prompt=prompt,
+                    model=config.LLM_MODEL,
+                    temperature=0.3,
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+                return response, all_docs
+            except Exception as e:
+                raise RuntimeError(f"Quiz generation failed: {str(e)}")
+        
+        # For large document sets: generate questions batch-by-batch, then merge
+        batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, total_chunks, BATCH_SIZE)]
+        
+        all_questions = []
+        
+        for batch_idx, batch in enumerate(batches, 1):
+            context_parts = []
+            for j, doc in enumerate(batch, 1):
+                source = doc.metadata.get("source", "Unknown")
+                page = doc.metadata.get("page", "?")
+                chunk_text = f"[Chunk {j} | {source}, Page {page}]\n{doc.page_content}"
+                context_parts.append(chunk_text)
+            
+            context = "\n\n---\n\n".join(context_parts)
+            
+            # Generate questions for this batch (fewer per batch, combine later)
+            batch_question_count = max(2, 10 // len(batches))  # Distribute 10 questions across batches
+            batch_prompt = f"""You are an expert examiner creating multiple-choice questions.
+
+From this material, create {batch_question_count} unique multiple-choice questions (each with exactly 4 options A-D and one correct answer).
+
+Material:
+{context}
+
+Return ONLY valid JSON array with {batch_question_count} objects in this format (no markdown, no ```json wrapper):
+[
+  {{
+    "question": "question text",
+    "options": {{"A": "...", "B": "...", "C": "...", "D": "..."}},
+    "answer": "A",
+    "explanation": "why this is correct"
+  }}
+]"""
+            
+            try:
+                batch_response = self.llm.generate(
+                    prompt=batch_prompt,
+                    model=config.LLM_MODEL,
+                    temperature=0.3,
+                    num_ctx=config.LLM_NUM_CTX,
+                )
+                
+                # Parse batch response
+                cleaned = batch_response.strip()
+                if cleaned.startswith("```"):
+                    lines = cleaned.split("\n")
+                    if lines[0].startswith("```"):
+                        lines = lines[1:]
+                    if lines[-1].startswith("```"):
+                        lines = lines[:-1]
+                    cleaned = "\n".join(lines).strip()
+                
+                # Find JSON array bounds
+                start_idx = cleaned.find("[")
+                end_idx = cleaned.rfind("]")
+                if start_idx != -1 and end_idx != -1:
+                    cleaned = cleaned[start_idx:end_idx+1]
+                
+                batch_questions = json.loads(cleaned)
+                if isinstance(batch_questions, list):
+                    all_questions.extend(batch_questions)
+            except Exception as e:
+                # Log error but continue with other batches
+                pass
+        
+        # Return up to 10 questions (or all if fewer batches generated)
+        final_questions = all_questions[:10]
+        
+        if not final_questions:
+            return (
+                "❌ Could not generate valid quiz questions. "
+                "Please ensure your LLM is working properly and try again.",
+                all_docs,
+            )
+        
+        # Pad with minimal questions if we have fewer than 10
+        while len(final_questions) < 10:
+            final_questions.append({
+                "question": "Placeholder question",
+                "options": {"A": "Option A", "B": "Option B", "C": "Option C", "D": "Option D"},
+                "answer": "A",
+                "explanation": "Placeholder explanation"
+            })
+        
+        return json.dumps(final_questions[:10], ensure_ascii=False, indent=2), all_docs
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
     def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:

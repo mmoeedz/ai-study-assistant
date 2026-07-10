@@ -721,25 +721,14 @@ Conclude with a brief note telling the user that they can now ask questions, gen
         Full ingestion pipeline for uploaded PDF files.
 
         Returns:
-            (num_documents_processed, num_chunks) processed.
+            (num_documents, num_chunks) processed.
         """
         all_chunks: List[Document] = []
         total_pages = 0
-        newly_processed_docs = 0
 
         for i, uploaded_file in enumerate(uploaded_files):
             file_bytes = uploaded_file.read()
             filename = uploaded_file.name
-
-            if filename in self.indexed_files:
-                if progress_callback:
-                    progress_callback(
-                        0.1 + 0.3 * (i + 1) / len(uploaded_files),
-                        f"Skipping {filename} (already indexed)…",
-                    )
-                continue
-
-            newly_processed_docs += 1
 
             if progress_callback:
                 progress_callback(
@@ -770,7 +759,7 @@ Conclude with a brief note telling the user that they can now ask questions, gen
                 progress_callback(0.95, "Saving index…")
             self._save_vectorstore()
 
-        return newly_processed_docs, len(all_chunks)
+        return len(uploaded_files), len(all_chunks)
 
     # ── Retrieval ────────────────────────────────────────────────────
 

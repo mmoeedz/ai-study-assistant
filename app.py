@@ -1352,35 +1352,79 @@ if section == "read":
         st.rerun()
 
 else:
-    # Code mode
+    # Code mode — separate from document indexing
     mode = "coding"
-    # Upload images with plus sign
+    
+    # ── Code File Upload ────────────────────────────────────────────
     st.markdown(
         """
         <div class="upload-card-header">
-            <div class="upload-icon">🖼️</div>
+            <div class="upload-icon">💾</div>
             <div class="upload-text">
-                <div class="upload-title">LLM Coding Mode — Paste (Ctrl+V) or Upload Image</div>
-                <div class="upload-sub">Click the ➕ box and hit <b>Ctrl+V</b> to paste from clipboard, or drag/drop snapshots and code pictures</div>
+                <div class="upload-title">Code Files & Snippets</div>
+                <div class="upload-sub">Upload code files for analysis, debugging, or explanation · multiple types supported</div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
     
-    # Simulating a direct plus icon / upload button for LLM experience
+    code_files = st.file_uploader(
+        "📂 Upload code files",
+        type=["py", "js", "html", "java", "cpp", "c", "ts", "jsx", "tsx", "cs", "rb", 
+              "go", "rs", "php", "swift", "kt", "scala", "r", "m", "sh", "sql", 
+              "json", "yaml", "yml", "xml", "toml", "md"],
+        accept_multiple_files=True,
+        key="code_files_uploader",
+        label_visibility="collapsed",
+    )
+    
+    if "code_file_preview" not in st.session_state:
+        st.session_state.code_file_preview = None
+    
+    if code_files:
+        st.caption(f"📎 **{len(code_files)}** file(s) selected")
+        
+        # Show preview of uploaded files
+        for uploaded_code_file in code_files:
+            file_content = uploaded_code_file.read().decode("utf-8", errors="replace")
+            file_size = len(file_content)
+            
+            with st.expander(f"📄 {uploaded_code_file.name} ({file_size} bytes)", expanded=False):
+                st.code(file_content, language="python", line_numbers=True)
+        
+        # Store for later use in chat
+        st.session_state.code_file_preview = code_files
+    
+    st.markdown("---")
+    
+    # ── Image Upload (Reference Images/Diagrams) ─────────────────────
+    st.markdown(
+        """
+        <div class="upload-card-header">
+            <div class="upload-icon">🖼️</div>
+            <div class="upload-text">
+                <div class="upload-title">Reference Images & Diagrams</div>
+                <div class="upload-sub">Screenshots, architecture diagrams, or error messages for context</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    
     uploaded_pic = st.file_uploader(
-        "➕",
+        "🖼️ Upload image",
         type=["png", "jpg", "jpeg", "webp"],
         key="code_image_uploader",
+        label_visibility="collapsed",
     )
+    
     if uploaded_pic is not None:
         import base64
-        # Show a gorgeous, compact preview box with elegant border styling like modern LLMs
         st.markdown(
             """
             <div style='background: rgba(212,168,75,0.06); padding: 0.8rem; border: 1px solid rgba(212,168,75,0.35); border-radius: 6px; margin: 0.5rem 0;'>
-                <p style='margin: 0 0 0.4rem 0; font-size: 0.82rem; color: #f1d490; font-weight: 500;'>🖼️ Attached Reference Image Preview:</p>
+                <p style='margin: 0 0 0.4rem 0; font-size: 0.82rem; color: #f1d490; font-weight: 500;'>🖼️ Image Preview:</p>
             </div>
             """,
             unsafe_allow_html=True
@@ -1653,7 +1697,6 @@ if mode == "quiz":
                     st.rerun()
 
 
-# ── Chat input ───────────────────────────────────────────────────────
 if prompt := st.chat_input(
     placeholder="Ask a question about your study material…",
     key="chat_input",
@@ -1661,6 +1704,19 @@ if prompt := st.chat_input(
     # Display user message immediately
     with st.chat_message("user", avatar="✍️"):
         st.markdown(prompt)
+        
+        # Display uploaded code files in chat (if any)
+        if section == "code" and "code_file_preview" in st.session_state and st.session_state.code_file_preview:
+            st.markdown("**📎 Attached Files:**")
+            for code_file in st.session_state.code_file_preview:
+                file_content = code_file.read().decode("utf-8", errors="replace")
+                file_size = len(file_content)
+                with st.expander(f"📄 {code_file.name} ({file_size} bytes)", expanded=False):
+                    st.code(file_content, language="python", line_numbers=True)
+        
+        # Display uploaded image if in Code mode
+        if section == "code" and uploaded_pic is not None:
+            st.image(uploaded_pic, width=280)
 
     # Generate response
     with st.chat_message("assistant", avatar="📜"):
@@ -1673,6 +1729,15 @@ if prompt := st.chat_input(
                 st.session_state.code_image_uploader.seek(0)
                 pic_bytes = st.session_state.code_image_uploader.read()
                 img_to_pass = base64.b64encode(pic_bytes).decode("utf-8")
+            
+            # Build code files context for Code mode
+            code_files_context = ""
+            if section == "code" and "code_file_preview" in st.session_state and st.session_state.code_file_preview:
+                code_files_list = []
+                for code_file in st.session_state.code_file_preview:
+                    file_content = code_file.read().decode("utf-8", errors="replace")
+                    code_files_list.append(f"**File: {code_file.name}**\n```\n{file_content}\n```")
+                code_files_context = "\n\n---\n\n".join(code_files_list)
 
             with st.spinner("Consulting the manuscripts…"):
                 # Pass full message history so the model has short-term conversation memory and remembers past images!
@@ -1730,11 +1795,16 @@ if prompt := st.chat_input(
                                     st.markdown(content, unsafe_allow_html=False)
 
             # Save to history (current chat thread + persist to disk)
+            code_files_list = []
+            if section == "code" and "code_file_preview" in st.session_state and st.session_state.code_file_preview:
+                code_files_list = [f.name for f in st.session_state.code_file_preview]
+            
             st.session_state.current_chat["messages"].append({
                 "query": prompt,
                 "mode": mode,
                 "answer": answer,
                 "image_base64": img_to_pass, # persist image base64 directly in history message for perfect multi-turn memory
+                "code_files": code_files_list,  # persist code file names in history
                 "sources": source_labels if source_docs else [],
                 "source_texts": source_texts if source_docs else [],
             })

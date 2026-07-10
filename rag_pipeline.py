@@ -813,17 +813,23 @@ Conclude with a brief note telling the user that they can now ask questions, gen
                     [],
                 )
 
-        # Special handling for summarize: USE ALL DOCUMENTS, not just top chunks
+        # Special handling for summarize and quiz: USE ALL DOCUMENTS, not just top chunks
         if mode == "summarize":
             return self._generate_comprehensive_summary(query)
-
+        
+        if mode == "quiz":
+            # For quiz generation, use ALL documents for comprehensive question coverage
+            all_docs = self.retrieve_all()
+            if not all_docs:
+                return (
+                    "⚠️ No documents have been indexed yet. "
+                    "Please upload and process documents first.",
+                    [],
+                )
+            docs = all_docs
         # For other modes: retrieve relevant chunks
-        if mode == "mcq":
+        elif mode == "mcq":
             k = min(8, self.total_chunks or 8)
-            docs = self.retrieve(query, k=k)
-        elif mode == "quiz":
-            # For quiz generation, retrieve up to 15 diverse chunks to have enough material for 10 distinct questions
-            k = min(15, self.total_chunks or 15)
             docs = self.retrieve(query, k=k)
         else:
             # Q&A and Coding: get top relevant chunks

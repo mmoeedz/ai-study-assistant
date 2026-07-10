@@ -1317,14 +1317,14 @@ if section == "read":
 else:
     # Code mode
     mode = "coding"
-    # Upload images with plus sign
+    # Upload images/code files with plus sign
     st.markdown(
         """
         <div class="upload-card-header">
-            <div class="upload-icon">🖼️</div>
+            <div class="upload-icon">💻</div>
             <div class="upload-text">
-                <div class="upload-title">LLM Coding Mode — Paste (Ctrl+V) or Upload Image</div>
-                <div class="upload-sub">Click the ➕ box and hit <b>Ctrl+V</b> to paste from clipboard, or drag/drop snapshots and code pictures</div>
+                <div class="upload-title">LLM Coding Mode — Upload Images or Code Files</div>
+                <div class="upload-sub">Click the ➕ box to drag/drop snapshots, paste from clipboard, or upload code files directly</div>
             </div>
         </div>
         """,
@@ -1332,27 +1332,54 @@ else:
     )
     
     # Simulating a direct plus icon / upload button for LLM experience
-    uploaded_pic = st.file_uploader(
+    uploaded_file = st.file_uploader(
         "➕",
-        type=["png", "jpg", "jpeg", "webp"],
+        type=["png", "jpg", "jpeg", "webp", "py", "html", "css", "js", "ts", "tsx", "jsx", "cpp", "c", "h", "hpp", "java", "cs", "rs", "go", "php", "rb", "sh", "sql", "json", "xml", "yaml", "yml", "txt", "md"],
         key="code_image_uploader",
     )
-    if uploaded_pic is not None:
-        import base64
-        # Show a gorgeous, compact preview box with elegant border styling like modern LLMs
-        st.markdown(
-            """
-            <div style='background: rgba(212,168,75,0.06); padding: 0.8rem; border: 1px solid rgba(212,168,75,0.35); border-radius: 6px; margin: 0.5rem 0;'>
-                <p style='margin: 0 0 0.4rem 0; font-size: 0.82rem; color: #f1d490; font-weight: 500;'>🖼️ Attached Reference Image Preview:</p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
-        st.image(uploaded_pic, width=280)
-        # Convert image to base64
-        uploaded_pic.seek(0)
-        pic_bytes = uploaded_pic.read()
-        image_base64 = base64.b64encode(pic_bytes).decode("utf-8")
+    if uploaded_file is not None:
+        filename = uploaded_file.name
+        ext = filename.split(".")[-1].lower() if "." in filename else ""
+        
+        if ext in ["png", "jpg", "jpeg", "webp"]:
+            import base64
+            # Show a gorgeous, compact preview box with elegant border styling like modern LLMs
+            st.markdown(
+                """
+                <div style='background: rgba(212,168,75,0.06); padding: 0.8rem; border: 1px solid rgba(212,168,75,0.35); border-radius: 6px; margin: 0.5rem 0;'>
+                    <p style='margin: 0 0 0.4rem 0; font-size: 0.82rem; color: #f1d490; font-weight: 500;'>🖼️ Attached Reference Image Preview:</p>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.image(uploaded_file, width=280)
+            # Convert image to base64
+            uploaded_file.seek(0)
+            pic_bytes = uploaded_file.read()
+            image_base64 = base64.b64encode(pic_bytes).decode("utf-8")
+        else:
+            # Show code file preview
+            uploaded_file.seek(0)
+            file_bytes = uploaded_file.read()
+            code_text = file_bytes.decode("utf-8", errors="replace")
+            char_count = len(code_text)
+            
+            st.markdown(
+                f"""
+                <div style='background: rgba(212, 168, 75, 0.06); padding: 0.8rem; border: 1px solid rgba(212, 168, 75, 0.35); border-radius: 6px; margin: 0.5rem 0; max-width: 450px;'>
+                    <div style='display: flex; align-items: center; gap: 0.6rem;'>
+                        <span style='font-size: 1.5rem;'>📄</span>
+                        <div>
+                            <p style='margin: 0; font-size: 0.84rem; color: #f1d490; font-weight: 600;'>{filename}</p>
+                            <p style='margin: 0; font-size: 0.74rem; color: #8ea0bb;'>Code File Attached • {char_count} characters</p>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            with st.expander(f"🔍 Preview {filename}", expanded=False):
+                st.code(code_text, language=ext)
 
 st.markdown("---")
 
@@ -1407,6 +1434,28 @@ for entry in st.session_state.current_chat["messages"]:
                 """,
                 unsafe_allow_html=True
             )
+        # Check and render attached code file preview for perfect chat flow references
+        if entry.get("code_file_name"):
+            filename = entry["code_file_name"]
+            content = entry.get("code_file_content", "")
+            ext = filename.split(".")[-1].lower() if "." in filename else ""
+            char_count = len(content)
+            st.markdown(
+                f"""
+                <div style='background: rgba(212, 168, 75, 0.04); padding: 0.8rem; border: 1px solid rgba(212, 168, 75, 0.25); border-radius: 6px; margin: 0.5rem 0; width: 100%; max-width: 450px;'>
+                    <div style='display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.4rem;'>
+                        <span style='font-size: 1.4rem;'>📄</span>
+                        <div>
+                            <div style='font-size: 0.88rem; color: #f1d490; font-weight: 600;'>{filename}</div>
+                            <div style='font-size: 0.76rem; color: #8ea0bb;'>Code File • {char_count} characters</div>
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            with st.expander(f"🔍 View {filename}", expanded=False):
+                st.code(content, language=ext)
     with st.chat_message("assistant", avatar="📜"):
         st.markdown(f'<div class="response-card">{entry["answer"]}</div>', unsafe_allow_html=True)
         # Source chips
@@ -1628,19 +1677,37 @@ if prompt := st.chat_input(
     # Generate response
     with st.chat_message("assistant", avatar="📜"):
         try:
-            # If in Code mode, pull image_base64 if available
+            # If in Code mode, pull image_base64 or code content if available
             img_to_pass = None
+            code_file_name_to_save = None
+            code_file_content_to_save = None
+            prompt_to_llm = prompt
+
             if section == "code" and "code_image_uploader" in st.session_state and st.session_state.code_image_uploader is not None:
                 import base64
                 # Rewind in case it was already read
                 st.session_state.code_image_uploader.seek(0)
-                pic_bytes = st.session_state.code_image_uploader.read()
-                img_to_pass = base64.b64encode(pic_bytes).decode("utf-8")
+                file_bytes = st.session_state.code_image_uploader.read()
+                filename = st.session_state.code_image_uploader.name
+                ext = filename.split(".")[-1].lower() if "." in filename else ""
+                
+                if ext in ["png", "jpg", "jpeg", "webp"]:
+                    img_to_pass = base64.b64encode(file_bytes).decode("utf-8")
+                else:
+                    try:
+                        code_text = file_bytes.decode("utf-8", errors="replace")
+                        code_file_name_to_save = filename
+                        code_file_content_to_save = code_text
+                        
+                        # Append the code content directly to the prompt passed to the LLM
+                        prompt_to_llm = f"{prompt}\n\n---\n\n### 📄 Uploaded Code File: `{filename}`\n```{ext}\n{code_text}\n```\n"
+                    except Exception as e:
+                        st.error(f"Failed to read attached file: {e}")
 
             with st.spinner("Consulting the manuscripts…"):
                 # Pass full message history so the model has short-term conversation memory and remembers past images!
                 answer, source_docs = assistant.generate(
-                    prompt, 
+                    prompt_to_llm, 
                     mode=mode, 
                     image_base64=img_to_pass,
                     history=st.session_state.current_chat["messages"]
@@ -1698,6 +1765,8 @@ if prompt := st.chat_input(
                 "mode": mode,
                 "answer": answer,
                 "image_base64": img_to_pass, # persist image base64 directly in history message for perfect multi-turn memory
+                "code_file_name": code_file_name_to_save,
+                "code_file_content": code_file_content_to_save,
                 "sources": source_labels if source_docs else [],
                 "source_texts": source_texts if source_docs else [],
             })

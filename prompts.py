@@ -163,6 +163,13 @@ QUIZ_PROMPT = """
 You are an expert examiner. Your task is to generate an interactive multiple-choice quiz of exactly 10 questions based ONLY on the provided document context below.
 
 Each question must test key terms, concepts, definitions, techniques, or formulas mentioned in the context.
+
+CRITICAL VARIETY RULES:
+- All 10 questions MUST be DISTINCT — never repeat a question or reword the same fact twice.
+- Each question must cover a DIFFERENT part of the material where possible.
+- The 4 options within a question must all be DIFFERENT from each other; never reuse generic filler like "Not mentioned in the material" as options.
+- Vary the correct answer across questions — do NOT make "A" the answer every time. Spread the correct answers across A, B, C, and D.
+
 You MUST output raw JSON and nothing else. No markdown wrapping (like ```json), no conversation, no leading or trailing text. Just the pure JSON array.
 
 Context:

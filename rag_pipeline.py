@@ -961,11 +961,20 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
     # ── Quiz Generation with Batch Processing ───────────────────────
     def _generate_quiz_batched(self, query: str) -> Tuple[str, List[Document]]:
         """
-        Generate 10 multiple-choice questions from comprehensive document coverage.
-        Uses batch processing to stay within API context limits.
-        
-        Returns JSON string with 10 questions and explanations.
+        Generate up to 10 diverse multiple-choice questions from the indexed
+        documents.
+
+        Key properties (fixes for the "same questions / same options" bug):
+          • Samples chunks from ACROSS the whole corpus, not just the front.
+          • Uses a higher temperature so regenerations differ.
+          • Strictly validates every question and de-duplicates them.
+          • Raises a clear error when the model fails — it never returns
+            templated placeholder questions.
+
+        Returns a JSON string with the question list.
         """
+        import random
+
         all_docs = self.retrieve_all()
         if not all_docs:
             return (
@@ -974,90 +983,81 @@ Now produce the FINAL COMPREHENSIVE SUMMARY that includes ALL information from e
                 [],
             )
 
-        # Smart batch sizing: aim for ~20-25KB per batch (safe margin below limits)
-        BATCH_SIZE = 25  # ~25 chunks × ~1000 chars = ~25KB
-        total_chunks = len(all_docs)
-        
-        # If we have few docs, send all at once
-        if total_chunks <= BATCH_SIZE:
-            context_parts = []
-            for i, doc in enumerate(all_docs, 1):
+        # Drop exact-duplicate chunks so we don't ask the same thing twice.
+        seen_content = set()
+        docs_pool: List[Document] = []
+        for d in all_docs:
+            key = (d.page_content or "").strip()
+            if key and key not in seen_content:
+                seen_content.add(key)
+                docs_pool.append(d)
+        if not docs_pool:
+            docs_pool = list(all_docs)
+
+        QUIZ_TEMPERATURE = 0.8  # higher temp → questions vary between runs
+        BATCH_SIZE = 25
+        errors: List[str] = []
+
+        def _build_context(batch: List[Document]) -> str:
+            parts = []
+            for i, doc in enumerate(batch, 1):
                 source = doc.metadata.get("source", "Unknown")
                 page = doc.metadata.get("page", "?")
-                chunk_text = f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}"
-                context_parts.append(chunk_text)
-            
-            context = "\n\n---\n\n".join(context_parts)
+                parts.append(f"[Chunk {i} | {source}, Page {page}]\n{doc.page_content}")
+            return "\n\n---\n\n".join(parts)
+
+        # ── Small corpus: one call over everything ───────────────────
+        if len(docs_pool) <= BATCH_SIZE:
+            # Shuffle so repeated generations emphasise different chunks.
+            batch = list(docs_pool)
+            random.shuffle(batch)
+            context = _build_context(batch)
             prompt_template = PROMPT_MAP.get("quiz", PROMPT_MAP["qa"])
             prompt = prompt_template.format(context=context, question=query)
-            
+
             try:
                 response = self.llm.generate(
                     prompt=prompt,
                     model=config.LLM_MODEL,
-                    temperature=0.3,
+                    temperature=QUIZ_TEMPERATURE,
                     num_ctx=config.LLM_NUM_CTX,
                 )
-                
-                # Validate response is not empty
-                if not response or not response.strip():
-                    raise ValueError("LLM returned empty response")
-                
-                # Clean and parse response
-                cleaned = response.strip()
-                
-                # Remove markdown code block wrappers if present
-                if "```" in cleaned:
-                    # Extract content between ``` markers
-                    parts = cleaned.split("```")
-                    if len(parts) >= 2:
-                        # Find the JSON part (usually the middle section)
-                        cleaned = parts[1].strip()
-                        if cleaned.lower().startswith("json"):
-                            cleaned = cleaned[4:].strip()
-                
-                # Find JSON array bounds
-                start_idx = cleaned.find("[")
-                end_idx = cleaned.rfind("]")
-                if start_idx == -1 or end_idx == -1:
-                    raise ValueError(f"No JSON array found in response: {cleaned[:100]}")
-                
-                cleaned = cleaned[start_idx:end_idx+1]
-                
-                # Parse JSON
-                quiz_json = json.loads(cleaned)
-                if not isinstance(quiz_json, list) or len(quiz_json) == 0:
-                    raise ValueError("Response is not a non-empty JSON array")
-                
-                return json.dumps(quiz_json, ensure_ascii=False, indent=2), all_docs
             except Exception as e:
                 raise RuntimeError(f"Quiz generation failed: {str(e)}")
-        
-        # For large document sets: generate questions batch-by-batch, then merge
-        batches = [all_docs[i : i + BATCH_SIZE] for i in range(0, total_chunks, BATCH_SIZE)]
-        
-        all_questions = []
-        
+
+            questions = self._dedupe_quiz_questions(self._parse_quiz_json(response))
+            if not questions:
+                raise RuntimeError(
+                    "Quiz generation failed: the model did not return any valid "
+                    "questions. Please try again."
+                )
+            return json.dumps(questions[:10], ensure_ascii=False, indent=2), all_docs
+
+        # ── Large corpus: spread batches across the whole document ───
+        batches = [
+            docs_pool[i : i + BATCH_SIZE]
+            for i in range(0, len(docs_pool), BATCH_SIZE)
+        ]
+        random.shuffle(batches)  # vary which region we start from each run
+
+        collected: List[Dict] = []
         for batch_idx, batch in enumerate(batches, 1):
-            context_parts = []
-            for j, doc in enumerate(batch, 1):
-                source = doc.metadata.get("source", "Unknown")
-                page = doc.metadata.get("page", "?")
-                chunk_text = f"[Chunk {j} | {source}, Page {page}]\n{doc.page_content}"
-                context_parts.append(chunk_text)
-            
-            context = "\n\n---\n\n".join(context_parts)
-            
-            # Generate questions for this batch (fewer per batch, combine later)
-            batch_question_count = max(2, 10 // len(batches))  # Distribute 10 questions across batches
+            if len(collected) >= 10:
+                break
+            batch = list(batch)
+            random.shuffle(batch)
+            context = _build_context(batch)
+
+            remaining = 10 - len(collected)
+            batch_question_count = max(2, min(4, remaining))
             batch_prompt = f"""You are an expert examiner creating multiple-choice questions.
 
-From this material, create {batch_question_count} unique multiple-choice questions (each with exactly 4 options A-D and one correct answer).
+From this material, create {batch_question_count} unique multiple-choice questions (each with exactly 4 DISTINCT options A-D and one correct answer). The correct answer must NOT always be option A — vary which option is correct.
 
 Material:
 {context}
 
-Return ONLY valid JSON array with {batch_question_count} objects in this format (no markdown, no ```json wrapper):
+Return ONLY a valid JSON array with {batch_question_count} objects in this format (no markdown, no ```json wrapper):
 [
   {{
     "question": "question text",
@@ -1066,169 +1066,120 @@ Return ONLY valid JSON array with {batch_question_count} objects in this format 
     "explanation": "why this is correct"
   }}
 ]"""
-            
+
             try:
                 batch_response = self.llm.generate(
                     prompt=batch_prompt,
                     model=config.LLM_MODEL,
-                    temperature=0.3,
+                    temperature=QUIZ_TEMPERATURE,
                     num_ctx=config.LLM_NUM_CTX,
                 )
-                
-                # Validate response is not empty
-                if not batch_response or not batch_response.strip():
-                    continue
-                
-                # Parse batch response with robust cleaning
-                cleaned = batch_response.strip()
-                
-                # Remove markdown code block wrappers
-                if "```" in cleaned:
-                    parts = cleaned.split("```")
-                    if len(parts) >= 2:
-                        cleaned = parts[1].strip()
-                        if cleaned.lower().startswith("json"):
-                            cleaned = cleaned[4:].strip()
-                
-                # Find JSON array bounds
-                start_idx = cleaned.find("[")
-                end_idx = cleaned.rfind("]")
-                if start_idx == -1 or end_idx == -1:
-                    continue
-                
-                cleaned = cleaned[start_idx:end_idx+1]
-                
-                # Try to parse JSON
-                batch_questions = json.loads(cleaned)
-                if isinstance(batch_questions, list) and len(batch_questions) > 0:
-                    all_questions.extend(batch_questions)
-            except (json.JSONDecodeError, ValueError, IndexError):
-                # Continue with next batch on parse errors
+            except Exception as e:
+                errors.append(f"batch {batch_idx}: {str(e)[:120]}")
                 continue
-            except Exception:
-                # Skip this batch on any other error
-                continue
-        
-        # Return up to 10 questions (or all if fewer batches generated)
-        final_questions = all_questions[:10]
-        
-        if not final_questions:
-            # Fallback: Generate meaningful questions from document content
-            final_questions = self._generate_fallback_quiz(all_docs)
-        
-        # Don't pad with generic placeholders - return actual questions from content
-        # If we have fewer than 10, that's okay - better quality over quantity
-        # Ensure at least some questions exist
-        if not final_questions:
-            return (
-                "⚠️ Could not generate quiz from available documents. "
-                "Please ensure your documents contain sufficient content.",
-                all_docs,
+
+            collected.extend(self._parse_quiz_json(batch_response))
+
+        questions = self._dedupe_quiz_questions(collected)
+        if not questions:
+            detail = f" ({'; '.join(errors)})" if errors else ""
+            raise RuntimeError(
+                "Quiz generation failed: no valid questions were produced"
+                + detail + "."
             )
-        
-        return json.dumps(final_questions[:10], ensure_ascii=False, indent=2), all_docs
-    
-    # ── Fallback Quiz Generator ─────────────────────────────────────
-    def _generate_fallback_quiz(self, docs: List[Document]) -> List[Dict]:
+
+        return json.dumps(questions[:10], ensure_ascii=False, indent=2), all_docs
+
+    # ── Quiz JSON parsing & validation helpers ──────────────────────
+    @staticmethod
+    def _parse_quiz_json(response: str) -> List[Dict]:
+        """Extract well-formed quiz questions from a raw LLM response.
+
+        Strips markdown fences, isolates the JSON array, and keeps only
+        questions that have a non-empty prompt, four DISTINCT options A-D,
+        and a valid answer key. Malformed or degenerate entries are dropped
+        rather than replaced with fake placeholders.
         """
-        Generate meaningful quiz questions from document content as fallback.
-        Creates diverse questions with actual content from documents.
-        Ensures at least 8-10 real questions, even with small documents.
-        """
-        fallback_questions = []
-        
-        # Strategy 1: Extract individual sentences as questions
-        all_sentences = []
-        for doc in docs:
-            content = doc.page_content
-            source = doc.metadata.get("source", "Document")
-            
-            # Split into sentences
-            sentences = [s.strip() for s in content.split(".") if 15 < len(s.strip()) < 300]
-            for sent in sentences:
-                all_sentences.append((sent, source))
-        
-        # Create questions from sentences
-        for idx, (sentence, source) in enumerate(all_sentences[:10]):
-            if idx >= 10:
-                break
-            
-            # Create question asking about this fact
-            words = sentence.split()
-            key_phrase = " ".join(words[:min(7, len(words))])
-            
-            fallback_questions.append({
-                "question": f"According to the material: {key_phrase}...?",
-                "options": {
-                    "A": sentence[:120].rstrip() + ("..." if len(sentence) > 120 else ""),
-                    "B": "This is not correct based on the material",
-                    "C": "Opposite of what is stated",
-                    "D": "Not mentioned in the material"
-                },
-                "answer": "A",
-                "explanation": f"From {source}: {sentence}"
+        if not response or not response.strip():
+            return []
+
+        cleaned = response.strip()
+        if "```" in cleaned:
+            parts = cleaned.split("```")
+            if len(parts) >= 2:
+                cleaned = parts[1].strip()
+                if cleaned.lower().startswith("json"):
+                    cleaned = cleaned[4:].strip()
+
+        start_idx = cleaned.find("[")
+        end_idx = cleaned.rfind("]")
+        if start_idx == -1 or end_idx == -1 or end_idx < start_idx:
+            return []
+        cleaned = cleaned[start_idx : end_idx + 1]
+
+        try:
+            raw = json.loads(cleaned)
+        except (json.JSONDecodeError, ValueError):
+            return []
+        if not isinstance(raw, list):
+            return []
+
+        valid: List[Dict] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            question = str(item.get("question", "")).strip()
+            options = item.get("options", {})
+            answer = str(item.get("answer", "")).strip().upper()[:1]
+            explanation = str(item.get("explanation", "")).strip()
+
+            if not question or not isinstance(options, dict):
+                continue
+
+            # Require all four option keys, each non-empty.
+            opts = {}
+            ok = True
+            for key in ("A", "B", "C", "D"):
+                val = str(options.get(key, "")).strip()
+                if not val:
+                    ok = False
+                    break
+                opts[key] = val
+            if not ok:
+                continue
+
+            # Reject degenerate questions whose options aren't all distinct.
+            if len(set(v.lower() for v in opts.values())) < 4:
+                continue
+            if answer not in ("A", "B", "C", "D"):
+                answer = "A"
+
+            valid.append({
+                "question": question,
+                "options": opts,
+                "answer": answer,
+                "explanation": explanation or "See the referenced study material.",
             })
-        
-        # Strategy 2: If still need more, create comparison/contrast questions
-        if len(fallback_questions) < 8 and len(docs) > 1:
-            for i in range(min(2, len(docs) - 1)):
-                if len(fallback_questions) >= 10:
-                    break
-                
-                doc1_text = docs[i].page_content[:200]
-                doc2_text = docs[i+1].page_content[:200] if i+1 < len(docs) else docs[i].page_content[200:400]
-                doc1_source = docs[i].metadata.get("source", "Document 1")
-                
-                fallback_questions.append({
-                    "question": f"Which statement is covered in the study material?",
-                    "options": {
-                        "A": doc1_text[:100],
-                        "B": "Only mentioned outside the provided material",
-                        "C": "Contradicted by the material",
-                        "D": "Not applicable to this topic"
-                    },
-                    "answer": "A",
-                    "explanation": f"From {doc1_source}: This concept is covered in your study materials."
-                })
-        
-        # Strategy 3: If still need more, create definition/concept questions from keywords
-        if len(fallback_questions) < 10:
-            for doc in docs[:3]:
-                if len(fallback_questions) >= 10:
-                    break
-                
-                content = doc.page_content
-                words = content.split()
-                
-                # Find noun phrases (potential concepts)
-                for i in range(0, len(words)-2, 3):
-                    if len(fallback_questions) >= 10:
-                        break
-                    
-                    phrase = " ".join(words[i:i+3])
-                    if len(phrase) > 8 and len(phrase) < 50:
-                        fallback_questions.append({
-                            "question": f"The material discusses the concept of '{phrase}'. What is its main purpose?",
-                            "options": {
-                                "A": "Central topic in the provided material",
-                                "B": "Minor detail not worth studying",
-                                "C": "Not mentioned in the material",
-                                "D": "Only theoretical, not practical"
-                            },
-                            "answer": "A",
-                            "explanation": f"'{phrase}' appears in the study material and represents an important concept."
-                        })
-        
-        # Return unique questions (remove exact duplicates)
-        seen = set()
-        unique_questions = []
-        for q in fallback_questions:
-            q_key = q["question"]
-            if q_key not in seen and len(unique_questions) < 10:
-                seen.add(q_key)
-                unique_questions.append(q)
-        
-        return unique_questions
+        return valid
+
+    @staticmethod
+    def _dedupe_quiz_questions(questions: List[Dict]) -> List[Dict]:
+        """Remove duplicate questions — by normalised question text AND by
+        identical option sets — so a quiz never shows the same item twice."""
+        seen_q = set()
+        seen_opts = set()
+        unique: List[Dict] = []
+        for q in questions:
+            q_key = " ".join(q.get("question", "").lower().split())
+            opt_key = tuple(sorted(
+                v.lower().strip() for v in q.get("options", {}).values()
+            ))
+            if not q_key or q_key in seen_q or opt_key in seen_opts:
+                continue
+            seen_q.add(q_key)
+            seen_opts.add(opt_key)
+            unique.append(q)
+        return unique
 
     # ── Map-reduce summarization (covers EVERY chunk for exam prep) ──
     def _summarize_map_reduce(self, query: str) -> Tuple[str, List[Document]]:
